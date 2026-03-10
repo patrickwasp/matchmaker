@@ -57,7 +57,7 @@ function getPublicAppUrl(): string | undefined {
 function hasPhotoDataUrl(answersJson: string): boolean {
   try {
     const answers = JSON.parse(answersJson) as ParticipantAnswers;
-    return Boolean(answers.photo_data_url);
+    return Boolean(answers.photo_urls?.length) || Boolean(answers.photo_data_url);
   } catch {
     return false;
   }
@@ -68,6 +68,16 @@ function buildParticipantPhotoFormula(
   answersJson: string
 ): string {
   const baseUrl = getPublicAppUrl();
+  try {
+    const answers = JSON.parse(answersJson) as ParticipantAnswers;
+    // Prefer Vercel Blob URL (direct link, no intermediate endpoint needed)
+    const firstBlobUrl = answers.photo_urls?.[0];
+    if (firstBlobUrl) {
+      return `=IMAGE("${firstBlobUrl}")`;
+    }
+  } catch {
+    // fall through to legacy path
+  }
   if (!baseUrl || !hasPhotoDataUrl(answersJson)) {
     return "";
   }

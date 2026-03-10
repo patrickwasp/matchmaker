@@ -102,6 +102,7 @@ export async function GET() {
         bio: partnerAnswers.bio,
         location: partnerAnswers.location,
         photo_data_url: partnerAnswers.photo_data_url,
+        photo_urls: partnerAnswers.photo_urls,
         phone_number: partnerAnswers.phone_number,
       },
     });

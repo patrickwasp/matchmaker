@@ -91,6 +91,7 @@ export async function GET() {
                 bio: item.answers.bio,
                 location: item.answers.location,
                 photo_data_url: item.answers.photo_data_url,
+                photo_urls: item.answers.photo_urls,
                 score: computeScore(myAnswers, item.answers, myQuizAnswers, item.quizAnswers),
                 likedByMe: likedByMe.has(item.participant.id),
                 likedYou: likedYou.has(item.participant.id),

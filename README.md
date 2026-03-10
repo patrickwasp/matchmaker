@@ -2,6 +2,8 @@
 
 A lightweight online matchmaking / speed-dating web application that runs almost entirely on **free infrastructure**.
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fpatrickwasp%2Fmatchmaker&project-name=matchmaker&repository-name=matchmaker&demo-title=Matchmaker&demo-description=Next.js%20matchmaking%20app%20with%20Convex%2C%20NextAuth%2C%20and%20Vercel%20Blob&products=%5B%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22convex%22%2C%22productSlug%22%3A%22convex%22%2C%22protocol%22%3A%22storage%22%7D%5D)
+
 | Layer              | Technology                          |
 | ------------------ | ----------------------------------- |
 | Frontend + Routing | Next.js 16 (App Router, TypeScript) |
@@ -67,15 +69,28 @@ The app stores three collections in Convex:
 
 ---
 
+## Quick Deploy
+
+The deploy button above will create a new Vercel project from this repository and attach the Convex Marketplace integration during import.
+
+It cannot fully eliminate manual setup because these values are project-specific and must still be supplied by the person deploying:
+
+- Google OAuth client ID and secret
+- NextAuth secret and deployment URL
+- Vercel Blob token
+- Admin email allow-list
+
+So the realistic outcome is one-click Vercel + Convex provisioning, plus one short pass through the environment variable form.
+
+---
+
 ## Setup Guide
 
 ### 1. Google Cloud Project
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/).
 2. Create a new project (or select an existing one).
-3. Enable these APIs:
-   - **Google Sheets API**
-   - **Google Drive API** (needed to list/access sheets)
+3. Enable the **Google People API** if your org requires explicit consent-screen setup.
 
 ### 2. Google OAuth Credentials (for user sign-in)
 
@@ -101,6 +116,7 @@ cp .env.example .env.local
 | `GOOGLE_CLIENT_SECRET`   | OAuth 2.0 Client Secret                                         |
 | `NEXTAUTH_SECRET`        | Run `openssl rand -base64 32`                                   |
 | `NEXTAUTH_URL`           | `http://localhost:3000` (dev) or your Vercel URL                |
+| `BLOB_READ_WRITE_TOKEN`  | Vercel Blob read/write token for profile photo uploads          |
 | `CONVEX_DEPLOY_KEY`      | Convex deploy key for this project                              |
 | `NEXT_PUBLIC_CONVEX_URL` | Convex deployment URL, e.g. `https://your-project.convex.cloud` |
 | `ADMIN_EMAILS`           | Comma-separated list of admin Google emails                     |
@@ -117,13 +133,12 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ### 6. Deploy to Vercel
 
-1. Push the repo to GitHub.
-2. Import the project in [Vercel](https://vercel.com/new).
-3. Add all environment variables from `.env.example` in the Vercel dashboard under **Settings → Environment Variables**.
-4. Connect the Vercel project to Convex and keep the custom prefix empty.
-5. Update `NEXTAUTH_URL` to your Vercel deployment URL.
-6. Update the authorised redirect URI in Google Cloud Console to match your Vercel URL.
-7. Deploy. The included `vercel.json` runs `npx convex deploy --cmd 'npm run build'` so the Convex backend is deployed before the Next.js build.
+1. Either use the deploy button above or import the repo manually in [Vercel](https://vercel.com/new).
+2. Add all environment variables from `.env.example` in the Vercel dashboard under **Settings -> Environment Variables**.
+3. If you imported manually, connect the Vercel project to Convex and keep the custom prefix empty.
+4. Update `NEXTAUTH_URL` to your Vercel deployment URL.
+5. Update the authorised redirect URI in Google Cloud Console to match your Vercel URL.
+6. Deploy. The included `vercel.json` runs `npx convex deploy --cmd 'npm run build'` so the Convex backend is deployed before the Next.js build.
 
 ---
 

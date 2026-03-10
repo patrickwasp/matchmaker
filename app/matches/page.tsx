@@ -218,68 +218,62 @@ export default function MatchesPage() {
 
   if (status === "loading" || loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(251,113,133,0.18),_transparent_30%),linear-gradient(180deg,_#fff8f1_0%,_#fff1f2_55%,_#ffe4e6_100%)]">
+      <div className="flex min-h-screen items-center justify-center bg-white">
         <p className="text-sm font-medium text-slate-500">Loading your results…</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,113,133,0.18),_transparent_30%),linear-gradient(180deg,_#fff8f1_0%,_#fff1f2_55%,_#ffe4e6_100%)] px-4 py-6 sm:px-6">
-      <div className="mx-auto flex max-w-3xl flex-col gap-5 [transform:translateZ(0)]">
-        <nav className="flex flex-col gap-3 rounded-[28px] border border-white/70 bg-white/90 px-4 py-4 shadow-[0_18px_60px_rgba(148,24,70,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-rose-500">
-              Matchmaker
-            </p>
-            <h1 className="text-2xl font-semibold text-slate-900">Your results</h1>
-            <p className="text-sm text-slate-500">{session?.user?.email}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => router.push("/profile")}
-              className="rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-600 transition hover:border-rose-300 hover:bg-rose-50"
-            >
-              Edit profile
-            </button>
-            <button
-              onClick={() => signOut({ callbackUrl: "/" })}
-              className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
-            >
-              Sign out
-            </button>
-          </div>
-        </nav>
-
-        <div className="rounded-[32px] border border-white/80 bg-white/92 p-3 shadow-[0_22px_70px_rgba(190,24,93,0.08)] backdrop-blur">
-          <div className="relative grid grid-cols-2 gap-2 rounded-[24px] bg-rose-50 p-1.5">
-            <div
-              className="absolute bottom-1.5 top-1.5 w-[calc(50%-0.25rem)] rounded-[20px] bg-white shadow-[0_10px_30px_rgba(190,24,93,0.12)] transition-transform duration-200 ease-out [transform:translateZ(0)]"
-              style={{ transform: `translateX(${tab === "top-picks" ? "0%" : "100%"})` }}
-            />
-            <button
-              type="button"
-              onClick={() => switchTab("top-picks")}
-              className={[
-                "relative z-10 rounded-[20px] px-4 py-3 text-sm font-semibold transition",
-                tab === "top-picks" ? "text-slate-900" : "text-rose-700 hover:text-rose-800",
-              ].join(" ")}
-            >
-              Top Picks
-            </button>
-            <button
-              type="button"
-              onClick={() => switchTab("matches")}
-              className={[
-                "relative z-10 rounded-[20px] px-4 py-3 text-sm font-semibold transition",
-                tab === "matches"
-                  ? "text-slate-900"
-                  : "text-rose-700 hover:text-rose-800",
-              ].join(" ")}
-            >
-              Matches
-            </button>
-          </div>
+    <div className="min-h-screen bg-white flex flex-col [transform:translateZ(0)]">
+      <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-5 py-3">
+        <div>
+          <p className="text-base font-bold text-rose-600">Matchmaker</p>
+          <p className="text-xs leading-tight text-slate-400">{session?.user?.email}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => router.push("/profile")}
+            className="rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-600 transition hover:border-rose-300 hover:bg-rose-50"
+          >
+            Edit profile
+          </button>
+          <button
+            onClick={() => signOut({ callbackUrl: "/" })}
+            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
+          >
+            Sign out
+          </button>
+        </div>
+      </header>
+      <div className="mx-auto w-full max-w-2xl px-4 sm:px-6 py-6 flex flex-col gap-5">
+        <div className="relative grid grid-cols-2 gap-2 rounded-[28px] bg-slate-100 p-1">
+          <div
+            className="absolute bottom-1 top-1 w-[calc(50%-0.125rem)] rounded-[24px] bg-white shadow-sm transition-transform duration-200 ease-out [transform:translateZ(0)]"
+            style={{ transform: `translateX(${tab === "top-picks" ? "0%" : "100%"})` }}
+          />
+          <button
+            type="button"
+            onClick={() => switchTab("top-picks")}
+            className={[
+              "relative z-10 rounded-[24px] px-4 py-3 text-sm font-semibold transition",
+              tab === "top-picks" ? "text-slate-900" : "text-slate-500 hover:text-slate-700",
+            ].join(" ")}
+          >
+            Top Picks
+          </button>
+          <button
+            type="button"
+            onClick={() => switchTab("matches")}
+            className={[
+              "relative z-10 rounded-[24px] px-4 py-3 text-sm font-semibold transition",
+              tab === "matches"
+                ? "text-slate-900"
+                : "text-slate-500 hover:text-slate-700",
+            ].join(" ")}
+          >
+            Matches
+          </button>
         </div>
 
         {error && (

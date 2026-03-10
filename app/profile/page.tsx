@@ -4,6 +4,12 @@ import { signOut, useSession } from "next-auth/react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { z } from "zod";
+
+const nameSchema = z.string().min(2, "Name must be at least 2 characters");
+const phoneSchema = z
+  .string()
+  .regex(/^[+\d\s\-(\)[\]]+$/, "Please enter a valid phone number");
 import {
   AGE_RANGES,
   GENDER_OPTIONS,
@@ -185,7 +191,7 @@ function getProfileSubtitle(step: ProfileStepId) {
 
 function ProfilePageFallback() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(251,113,133,0.18),_transparent_30%),linear-gradient(180deg,_#fff8f1_0%,_#fff1f2_55%,_#ffe4e6_100%)]">
+    <div className="flex min-h-screen items-center justify-center bg-white">
       <p className="text-sm font-medium text-slate-500">Loading your profile…</p>
     </div>
   );
@@ -216,6 +222,7 @@ function ProfilePageContent() {
   const [processingPhoto, setProcessingPhoto] = useState(false);
   const [hasSavedProfile, setHasSavedProfile] = useState(false);
   const [motionDirection, setMotionDirection] = useState<MotionDirection>("forward");
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   const currentProfileStep = PROFILE_STEPS[profileStepIndex];
   const quizSteps = useMemo<QuizStep[]>(() => {
@@ -434,10 +441,12 @@ function ProfilePageContent() {
   }
 
   function goToPreviousProfileStep() {
+    setValidationError(null);
     navigateToProfileStep(profileStepIndex - 1, "backward");
   }
 
   function goToNextProfileStep() {
+    setValidationError(null);
     navigateToProfileStep(profileStepIndex + 1, "forward");
   }
 
@@ -497,7 +506,7 @@ function ProfilePageContent() {
   function canContinueProfile() {
     switch (currentProfileStep) {
       case "name":
-        return Boolean(form.name?.trim());
+        return Boolean(form.name?.trim()) && nameSchema.safeParse(form.name?.trim()).success;
       case "age_range":
         return Boolean(form.age_range);
       case "gender":
@@ -507,7 +516,7 @@ function ProfilePageContent() {
       case "bio":
         return true;
       case "phone_number":
-        return Boolean(form.phone_number?.trim());
+        return Boolean(form.phone_number?.trim()) && phoneSchema.safeParse(form.phone_number?.trim()).success;
       case "interests":
         return (form.interests?.length ?? 0) === INTEREST_LIMIT;
       case "photo":
@@ -633,55 +642,47 @@ function ProfilePageContent() {
 
   if (status === "loading" || loadingProfile) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(251,113,133,0.18),_transparent_30%),linear-gradient(180deg,_#fff8f1_0%,_#fff1f2_55%,_#ffe4e6_100%)]">
+      <div className="flex min-h-screen items-center justify-center bg-white">
         <p className="text-sm font-medium text-slate-500">Loading your profile…</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen overflow-y-auto bg-[radial-gradient(circle_at_top,_rgba(251,113,133,0.18),_transparent_30%),linear-gradient(180deg,_#fff8f1_0%,_#fff1f2_55%,_#ffe4e6_100%)] px-4 py-4 sm:px-6">
-      <div className="mx-auto flex max-w-md flex-col gap-4 [transform:translateZ(0)]">
-        <nav className="flex items-center justify-between rounded-[28px] border border-white/70 bg-white/90 px-4 py-3 shadow-[0_18px_60px_rgba(148,24,70,0.08)] backdrop-blur">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-rose-500">
-              Matchmaker
-            </p>
-            <p className="text-sm font-semibold text-slate-900">
-              {phase === "profile" ? "Profile" : "Quiz"}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {hasSavedProfile && (
-              <button
-                onClick={() => router.push("/matches")}
-                className="rounded-full border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-600 transition hover:border-rose-300 hover:bg-rose-50"
-              >
-                Results
-              </button>
-            )}
+    <div className="min-h-screen bg-white flex flex-col [transform:translateZ(0)]">
+      <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-5 py-3">
+        <p className="text-base font-bold text-rose-600">Matchmaker</p>
+        <div className="flex items-center gap-2">
+          {hasSavedProfile && (
             <button
-              onClick={() => signOut({ callbackUrl: "/" })}
-              className="rounded-full bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700"
+              onClick={() => router.push("/matches")}
+              className="rounded-full border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-600 transition hover:border-rose-300 hover:bg-rose-50"
             >
-              Sign out
+              Results
             </button>
-          </div>
-        </nav>
+          )}
+          <button
+            onClick={() => signOut({ callbackUrl: "/" })}
+            className="rounded-full bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700"
+          >
+            Sign out
+          </button>
+        </div>
+      </header>
 
-        <section className="flex min-h-[calc(100vh-7.5rem)] flex-col overflow-hidden rounded-[32px] border border-white/80 bg-white/92 px-5 py-5 shadow-[var(--card-shadow)] backdrop-blur sm:px-6">
-          <div className="mb-5 overflow-hidden rounded-full bg-rose-100/70">
-            <div
-              className="h-2 rounded-full bg-gradient-to-r from-rose-500 to-orange-400 transition-all"
-              style={{
-                width:
-                  phase === "profile"
-                    ? `${((profileStepIndex + 1) / PROFILE_STEPS.length) * 100}%`
-                    : `${((quizStepIndex + 1) / Math.max(quizSteps.length, 1)) * 100}%`,
-              }}
-            />
-          </div>
+      <div className="h-1 w-full shrink-0 bg-slate-100">
+        <div
+          className="h-1 bg-rose-500 transition-all"
+          style={{
+            width:
+              phase === "profile"
+                ? `${((profileStepIndex + 1) / PROFILE_STEPS.length) * 100}%`
+                : `${((quizStepIndex + 1) / Math.max(quizSteps.length, 1)) * 100}%`,
+          }}
+        />
+      </div>
 
+      <div className="flex flex-1 flex-col mx-auto w-full max-w-lg px-5 sm:px-8">
           <AnimatePresence
             mode="wait"
             initial={false}
@@ -708,28 +709,43 @@ function ProfilePageContent() {
                     {getProfileTitle(currentProfileStep, form.gender)}
                   </h1>
                   {getProfileSubtitle(currentProfileStep) && (
-                    <p className="mt-3 max-w-sm text-sm leading-6 text-slate-500">
+                    <p className="mt-3 max-w-sm text-base leading-6 text-slate-500">
                       {getProfileSubtitle(currentProfileStep)}
                     </p>
                   )}
 
                   <div className="mt-8 space-y-5">
                     {currentProfileStep === "name" && (
-                      <input
-                        autoFocus
-                        type="text"
-                        maxLength={100}
-                        value={form.name ?? ""}
-                        onChange={(event) =>
-                          updateForm((previous) => ({
-                            ...previous,
-                            name: event.target.value,
-                          }))
-                        }
-                        onKeyDown={handleTextStepKeyDown}
-                        placeholder="Jamie"
-                        className="w-full rounded-[28px] border border-rose-100 bg-rose-50/60 px-5 py-5 text-xl text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-rose-300 focus:bg-white focus:ring-4 focus:ring-rose-100"
-                      />
+                      <>
+                        <input
+                          autoFocus
+                          type="text"
+                          maxLength={100}
+                          value={form.name ?? ""}
+                          onChange={(event) => {
+                            setValidationError(null);
+                            updateForm((previous) => ({
+                              ...previous,
+                              name: event.target.value,
+                            }));
+                          }}
+                          onBlur={() => {
+                            const trimmed = form.name?.trim() ?? "";
+                            if (trimmed) {
+                              const result = nameSchema.safeParse(trimmed);
+                              if (!result.success) {
+                                setValidationError(result.error.issues[0]?.message ?? null);
+                              }
+                            }
+                          }}
+                          onKeyDown={handleTextStepKeyDown}
+                          placeholder="Jamie M."
+                          className="w-full rounded-[28px] border border-rose-100 bg-rose-50/60 px-5 py-5 text-xl text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-rose-300 focus:bg-white focus:ring-4 focus:ring-rose-100"
+                        />
+                        {validationError && (
+                          <p className="px-2 text-sm text-red-500">{validationError}</p>
+                        )}
+                      </>
                     )}
 
                     {currentProfileStep === "age_range" && (
@@ -768,7 +784,6 @@ function ProfilePageContent() {
                                   ...previous,
                                   gender: option.value,
                                 }));
-                                navigateToProfileStep(profileStepIndex + 1, "forward");
                               }}
                               className={optionButtonClasses(selected)}
                             >
@@ -824,21 +839,36 @@ function ProfilePageContent() {
                     )}
 
                     {currentProfileStep === "phone_number" && (
-                      <input
-                        autoFocus
-                        type="tel"
-                        maxLength={30}
-                        value={form.phone_number ?? ""}
-                        onChange={(event) =>
-                          updateForm((previous) => ({
-                            ...previous,
-                            phone_number: event.target.value,
-                          }))
-                        }
-                        onKeyDown={handleTextStepKeyDown}
-                        placeholder="(555) 123-4567"
-                        className="w-full rounded-[28px] border border-rose-100 bg-rose-50/60 px-5 py-5 text-xl text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-rose-300 focus:bg-white focus:ring-4 focus:ring-rose-100"
-                      />
+                      <>
+                        <input
+                          autoFocus
+                          type="tel"
+                          maxLength={30}
+                          value={form.phone_number ?? ""}
+                          onChange={(event) => {
+                            setValidationError(null);
+                            updateForm((previous) => ({
+                              ...previous,
+                              phone_number: event.target.value,
+                            }));
+                          }}
+                          onBlur={() => {
+                            const trimmed = form.phone_number?.trim() ?? "";
+                            if (trimmed) {
+                              const result = phoneSchema.safeParse(trimmed);
+                              if (!result.success) {
+                                setValidationError(result.error.issues[0]?.message ?? null);
+                              }
+                            }
+                          }}
+                          onKeyDown={handleTextStepKeyDown}
+                          placeholder="(555) 123-4567"
+                          className="w-full rounded-[28px] border border-rose-100 bg-rose-50/60 px-5 py-5 text-xl text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-rose-300 focus:bg-white focus:ring-4 focus:ring-rose-100"
+                        />
+                        {validationError && (
+                          <p className="px-2 text-sm text-red-500">{validationError}</p>
+                        )}
+                      </>
                     )}
 
                     {currentProfileStep === "interests" && (
@@ -935,7 +965,7 @@ function ProfilePageContent() {
                   </div>
                 </div>
 
-                <div className="sticky bottom-0 mt-2 space-y-3 bg-white/92 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-4">
+                <div className="sticky bottom-0 mt-2 space-y-3 bg-white border-t border-slate-100 pb-[max(env(safe-area-inset-bottom),1rem)] pt-4">
                   {error && (
                     <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>
                   )}
@@ -1055,7 +1085,7 @@ function ProfilePageContent() {
                   )}
                 </div>
 
-                <div className="sticky bottom-0 mt-2 space-y-3 bg-white/92 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-4">
+                <div className="sticky bottom-0 mt-2 space-y-3 bg-white border-t border-slate-100 pb-[max(env(safe-area-inset-bottom),1rem)] pt-4">
                   {error && (
                     <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>
                   )}
@@ -1101,7 +1131,6 @@ function ProfilePageContent() {
             )}
           </motion.div>
           </AnimatePresence>
-        </section>
       </div>
     </div>
   );

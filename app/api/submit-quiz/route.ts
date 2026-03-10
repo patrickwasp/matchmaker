@@ -8,7 +8,7 @@ import {
     getQuizQuestions,
     updateParticipant,
     updateParticipantQuizAnswers,
-} from "@/lib/googleSheets";
+} from "@/lib/storage";
 import type { ParticipantAnswers } from "@/types";
 
 const QuizPayloadSchema = z.object({

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getParticipantById } from "@/lib/googleSheets";
+import { getParticipantById } from "@/lib/storage";
 import type { ParticipantAnswers } from "@/types";
 
 function decodeDataUrl(dataUrl: string) {

@@ -15,7 +15,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
-import { getAllParticipants } from "@/lib/googleSheets";
+import { getAllParticipants } from "@/lib/storage";
 
 // ---------------------------------------------------------------------------
 // Admin guard

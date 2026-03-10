@@ -7,7 +7,7 @@ import {
     getAllParticipants,
     getAllLikes,
     getParticipantByEmail,
-} from "@/lib/googleSheets";
+} from "@/lib/storage";
 import { computeScore } from "@/utils/matching";
 import type { ParticipantAnswers, ParticipantQuizAnswers, ResultsResponse } from "@/types";
 

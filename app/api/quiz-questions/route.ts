@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { z } from "zod";
 import { authOptions } from "@/lib/auth";
-import { getQuizQuestions, replaceQuizQuestions } from "@/lib/googleSheets";
+import { getQuizQuestions, replaceQuizQuestions } from "@/lib/storage";
 
 const QuizQuestionSchema = z.object({
     id: z.string().min(1),

@@ -2,14 +2,14 @@
 
 A lightweight online matchmaking / speed-dating web application that runs almost entirely on **free infrastructure**.
 
-| Layer | Technology |
-|---|---|
+| Layer              | Technology                          |
+| ------------------ | ----------------------------------- |
 | Frontend + Routing | Next.js 16 (App Router, TypeScript) |
-| Styling | TailwindCSS |
-| Hosting | Vercel (free tier) |
-| Backend | Vercel Serverless Functions |
-| Database | Google Sheets (free) |
-| Authentication | Google OAuth via NextAuth.js |
+| Styling            | TailwindCSS                         |
+| Hosting            | Vercel (free tier)                  |
+| Backend            | Vercel Serverless Functions         |
+| Database           | Convex                              |
+| Authentication     | Google OAuth via NextAuth.js        |
 
 ---
 
@@ -17,7 +17,7 @@ A lightweight online matchmaking / speed-dating web application that runs almost
 
 - **Sign in with Google** – no password required.
 - **Questionnaire** – users fill in a profile (name, age range, interests, etc.).
-- **Secure storage** – profiles are written to a Google Sheet through a service account; the sheet is never exposed to the browser.
+- **Secure storage** – profiles, likes, and quiz questions are stored in Convex through server-side route handlers.
 - **Matching algorithm** – admins trigger a compatibility-scoring algorithm (shared interests + intent).
 - **Match reveal** – users see only their own matches; other users' responses are never exposed.
 - **Admin panel** – a protected `/admin` page lets authorised users run the matching algorithm.
@@ -39,10 +39,14 @@ A lightweight online matchmaking / speed-dating web application that runs almost
   /admin                    Admin panel
   layout.tsx
   page.tsx                  Landing / sign-in page
-  providers.tsx             Client-side SessionProvider wrapper
+  ConvexClientProvider.tsx  Client-side Convex provider
+  providers.tsx             Client-side provider composition
 /lib
   auth.ts                   NextAuth configuration
-  googleSheets.ts           Google Sheets API helper (server-side only)
+  storage.ts                Convex storage helper (server-side only)
+/convex
+  schema.ts                 Convex database schema
+  storage.ts                Internal Convex queries and mutations
 /types
   index.ts                  Shared TypeScript types
   next-auth.d.ts            NextAuth session type augmentation
@@ -53,33 +57,13 @@ A lightweight online matchmaking / speed-dating web application that runs almost
 
 ---
 
-## Spreadsheet Structure
+## Convex Data Model
 
-Create a Google Spreadsheet with **two tabs**:
+The app stores three collections in Convex:
 
-### Sheet: `participants`
-
-| Column | Description |
-|--------|-------------|
-| `id` | UUID |
-| `email` | Google account email |
-| `display_name` | Public display name |
-| `answers_json` | JSON-serialised questionnaire answers |
-| `created_at` | ISO 8601 timestamp |
-
-Add these exact column headers in row 1: `id`, `email`, `display_name`, `answers_json`, `created_at`
-
-### Sheet: `matches`
-
-| Column | Description |
-|--------|-------------|
-| `match_id` | UUID |
-| `participant_a_id` | UUID of first participant |
-| `participant_b_id` | UUID of second participant |
-| `score` | Compatibility score (0–10) |
-| `revealed_at` | ISO 8601 timestamp |
-
-Add these exact column headers in row 1: `match_id`, `participant_a_id`, `participant_b_id`, `score`, `revealed_at`
+- `participants` for profile records and quiz answers.
+- `likes` for one-way like/dislike decisions and mutual match detection.
+- `quizQuestions` for the editable admin quiz.
 
 ---
 
@@ -103,15 +87,6 @@ Add these exact column headers in row 1: `match_id`, `participant_a_id`, `partic
    - `https://your-vercel-domain.vercel.app/api/auth/callback/google` (production)
 5. Copy the **Client ID** and **Client Secret**.
 
-### 3. Google Service Account (for Sheets access)
-
-1. In Google Cloud Console → **APIs & Services → Credentials**.
-2. Click **Create Credentials → Service Account**.
-3. Give it any name (e.g., `matchmaker-sheets`).
-4. After creating, go to the service account → **Keys → Add Key → Create new key (JSON)**.
-5. Download the JSON key file.
-6. **Share your Google Spreadsheet** with the service account email (found in the JSON as `client_email`). Give it **Editor** access.
-
 ### 4. Environment Variables
 
 Copy `.env.example` to `.env.local` and fill in the values:
@@ -120,23 +95,21 @@ Copy `.env.example` to `.env.local` and fill in the values:
 cp .env.example .env.local
 ```
 
-| Variable | Where to find it |
-|---|---|
-| `GOOGLE_CLIENT_ID` | OAuth 2.0 Client ID |
-| `GOOGLE_CLIENT_SECRET` | OAuth 2.0 Client Secret |
-| `NEXTAUTH_SECRET` | Run `openssl rand -base64 32` |
-| `NEXTAUTH_URL` | `http://localhost:3000` (dev) or your Vercel URL |
-| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | `client_email` field in the JSON key file |
-| `GOOGLE_PRIVATE_KEY` | `private_key` field in the JSON key file (keep the `\n` line breaks, wrap in double quotes) |
-| `GOOGLE_SPREADSHEET_ID` | The long ID in your spreadsheet's URL |
-| `ADMIN_EMAILS` | Comma-separated list of admin Google emails |
-
-> **Tip:** When pasting `GOOGLE_PRIVATE_KEY` into `.env.local`, keep the literal `\n` characters inside the value (they will be replaced with real newlines at runtime).
+| Variable                 | Where to find it                                                |
+| ------------------------ | --------------------------------------------------------------- |
+| `GOOGLE_CLIENT_ID`       | OAuth 2.0 Client ID                                             |
+| `GOOGLE_CLIENT_SECRET`   | OAuth 2.0 Client Secret                                         |
+| `NEXTAUTH_SECRET`        | Run `openssl rand -base64 32`                                   |
+| `NEXTAUTH_URL`           | `http://localhost:3000` (dev) or your Vercel URL                |
+| `CONVEX_DEPLOY_KEY`      | Convex deploy key for this project                              |
+| `NEXT_PUBLIC_CONVEX_URL` | Convex deployment URL, e.g. `https://your-project.convex.cloud` |
+| `ADMIN_EMAILS`           | Comma-separated list of admin Google emails                     |
 
 ### 5. Local Development
 
 ```bash
 npm install
+npx convex dev
 npm run dev
 ```
 
@@ -147,9 +120,10 @@ Open [http://localhost:3000](http://localhost:3000).
 1. Push the repo to GitHub.
 2. Import the project in [Vercel](https://vercel.com/new).
 3. Add all environment variables from `.env.example` in the Vercel dashboard under **Settings → Environment Variables**.
-4. Update `NEXTAUTH_URL` to your Vercel deployment URL.
-5. Update the authorised redirect URI in Google Cloud Console to match your Vercel URL.
-6. Deploy!
+4. Connect the Vercel project to Convex and keep the custom prefix empty.
+5. Update `NEXTAUTH_URL` to your Vercel deployment URL.
+6. Update the authorised redirect URI in Google Cloud Console to match your Vercel URL.
+7. Deploy. The included `vercel.json` runs `npx convex deploy --cmd 'npm run build'` so the Convex backend is deployed before the Next.js build.
 
 ---
 
@@ -166,22 +140,22 @@ Scores are normalised to a 0–10 scale. A greedy one-to-one assignment then pai
 
 ## Security Notes
 
-- The Google Sheet is **never accessed from the browser**. All reads/writes go through serverless API routes using a service account.
+- Convex writes happen through serverless API routes using a server-only admin client configured with `CONVEX_DEPLOY_KEY`.
 - User sessions are managed by NextAuth.js with a signed JWT cookie.
 - Users can only view their own profile and matches. Other users' data is never returned by any API endpoint.
 - Admin endpoints are protected by an `ADMIN_EMAILS` allow-list checked server-side.
-- Input is validated with [Zod](https://zod.dev/) before writing to the sheet.
+- Input is validated with [Zod](https://zod.dev/) before writing to Convex.
 
 ---
 
 ## API Reference
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `POST` | `/api/submit-profile` | User | Save / update questionnaire answers |
-| `GET` | `/api/me` | User | Return the caller's participant record |
-| `POST` | `/api/run-matching` | Admin | Run the matching algorithm |
-| `GET` | `/api/my-matches` | User | Return the caller's matches |
+| Method | Path                  | Auth  | Description                            |
+| ------ | --------------------- | ----- | -------------------------------------- |
+| `POST` | `/api/submit-profile` | User  | Save / update questionnaire answers    |
+| `GET`  | `/api/me`             | User  | Return the caller's participant record |
+| `POST` | `/api/run-matching`   | Admin | Run the matching algorithm             |
+| `GET`  | `/api/my-matches`     | User  | Return the caller's matches            |
 
 ---
 

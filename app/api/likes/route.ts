@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { z } from "zod";
 import { authOptions } from "@/lib/auth";
-import { getAllLikes, getParticipantByEmail, getParticipantById, upsertLike } from "@/lib/googleSheets";
+import { getAllLikes, getParticipantByEmail, getParticipantById, upsertLike } from "@/lib/storage";
 
 const LikePayloadSchema = z.object({
   targetParticipantId: z.string().min(1),

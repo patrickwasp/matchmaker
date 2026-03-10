@@ -9,7 +9,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
-import { getParticipantByEmail } from "@/lib/googleSheets";
+import { getParticipantByEmail } from "@/lib/storage";
 
 export async function GET() {
   const session = await getServerSession(authOptions);

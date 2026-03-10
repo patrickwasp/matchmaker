@@ -19,7 +19,7 @@ import {
   appendParticipant,
   getParticipantByEmail,
   updateParticipant,
-} from "@/lib/googleSheets";
+} from "@/lib/storage";
 
 // ---------------------------------------------------------------------------
 // Validation schema

@@ -47,12 +47,12 @@ export default function AdminPage() {
             .finally(() => setLoadingQuestions(false));
     }, [status]);
 
-    async function handleInitSheets() {
+    async function handleInitStorage() {
         setInitialising(true);
         setInitDone(false);
         setInitError(null);
         try {
-            const response = await fetch("/api/init-sheets", { method: "POST" });
+            const response = await fetch("/api/init-storage", { method: "POST" });
             const data = await response.json();
             if (!response.ok) {
                 setInitError(data.error ?? "Something went wrong.");
@@ -155,19 +155,19 @@ export default function AdminPage() {
                 </nav>
 
                 <section className="rounded-[32px] border border-white/80 bg-white/92 p-6 shadow-[0_22px_70px_rgba(190,24,93,0.08)] backdrop-blur">
-                    <h2 className="text-xl font-semibold text-slate-900">Spreadsheet setup</h2>
+                    <h2 className="text-xl font-semibold text-slate-900">Convex storage</h2>
                     <p className="mt-2 text-sm leading-6 text-slate-500">
-                        Creates the participants, matches, and quiz question tabs if they do not exist yet.
+                        Seeds Convex with the default quiz questions if this deployment is still empty.
                     </p>
                     <button
-                        onClick={handleInitSheets}
+                        onClick={handleInitStorage}
                         disabled={initialising}
                         className="mt-4 rounded-full bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-600 disabled:opacity-50"
                     >
-                        {initialising ? "Initialising…" : "Initialise sheets"}
+                        {initialising ? "Initialising…" : "Initialise storage"}
                     </button>
                     {initError && <p className="mt-3 text-sm text-red-600">{initError}</p>}
-                    {initDone && <p className="mt-3 text-sm text-emerald-600">Sheets are ready.</p>}
+                    {initDone && <p className="mt-3 text-sm text-emerald-600">Convex is ready.</p>}
                 </section>
 
                 <section className="rounded-[32px] border border-white/80 bg-white/92 p-6 shadow-[0_22px_70px_rgba(190,24,93,0.08)] backdrop-blur">

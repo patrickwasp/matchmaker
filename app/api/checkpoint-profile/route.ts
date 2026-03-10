@@ -18,7 +18,7 @@ import {
   appendParticipant,
   getParticipantByEmail,
   updateParticipant,
-} from "@/lib/googleSheets";
+} from "@/lib/storage";
 
 const interestValues = INTEREST_OPTIONS.map((i) => i.value) as [
   string,

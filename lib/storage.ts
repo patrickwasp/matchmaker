@@ -1,10 +1,13 @@
 import "server-only";
 
 import { ConvexHttpClient } from "convex/browser";
+import { v4 as uuidv4 } from "uuid";
 import { internal } from "@/convex/_generated/api";
 import { DEFAULT_QUIZ_QUESTIONS, sortQuizQuestions } from "@/lib/quiz";
 import { canonicalizePhotoUrl } from "@/lib/photoUrls";
 import type { LikeRecord, Participant, ParticipantAnswers, QuizQuestion } from "@/types";
+
+const TEST_EMAIL_DOMAIN = "@matchmaker.test";
 
 type AdminConvexHttpClient = ConvexHttpClient & {
   setAdminAuth(token: string): void;
@@ -234,9 +237,110 @@ export async function replaceQuizQuestions(
   });
 }
 
-export async function initializeStorage(): Promise<void> {
+export async function deleteTestData(): Promise<{ participants: number; likes: number }> {
   const client = getConvexClient();
-  await runInternalMutation<void>(client, internal.storage.initializeStorage, {
-    questions: sortQuizQuestions(DEFAULT_QUIZ_QUESTIONS),
-  });
+  return await runInternalMutation<{ participants: number; likes: number }>(
+    client,
+    internal.storage.deleteTestData,
+    {}
+  );
+}
+
+export async function addTestData(): Promise<{ participants: number; likes: number }> {
+  await deleteTestData();
+
+  const createdAt = new Date().toISOString();
+  const participants: Participant[] = [
+    createTestParticipant({
+      email: `alex${TEST_EMAIL_DOMAIN}`,
+      name: "Alex",
+      age_range: "26-35",
+      preferred_age_ranges: ["26-35", "36-45"],
+      gender: "Man",
+      interests: ["music", "travel", "coffee"],
+      location: "New York",
+      bio: "Likes easy conversation, good coffee, and live music.",
+      created_at: createdAt,
+    }),
+    createTestParticipant({
+      email: `ben${TEST_EMAIL_DOMAIN}`,
+      name: "Ben",
+      age_range: "36-45",
+      preferred_age_ranges: ["26-35", "36-45"],
+      gender: "Man",
+      interests: ["fitness", "outdoors", "dogs"],
+      location: "Brooklyn",
+      bio: "Early hikes, dog walks, and direct plans.",
+      created_at: createdAt,
+    }),
+    createTestParticipant({
+      email: `clara${TEST_EMAIL_DOMAIN}`,
+      name: "Clara",
+      age_range: "26-35",
+      preferred_age_ranges: ["26-35", "36-45"],
+      gender: "Woman",
+      interests: ["music", "reading", "travel"],
+      location: "Manhattan",
+      bio: "Bookshops, dinner dates, and weekends away.",
+      created_at: createdAt,
+    }),
+    createTestParticipant({
+      email: `maya${TEST_EMAIL_DOMAIN}`,
+      name: "Maya",
+      age_range: "26-35",
+      preferred_age_ranges: ["26-35"],
+      gender: "Woman",
+      interests: ["fitness", "wellness", "coffee"],
+      location: "Queens",
+      bio: "Warm, active, and very into consistent communication.",
+      created_at: createdAt,
+    }),
+  ];
+
+  for (const participant of participants) {
+    await appendParticipant(participant);
+  }
+
+  await upsertLike(participants[0].id, participants[2].id, true);
+  await upsertLike(participants[2].id, participants[0].id, true);
+  await upsertLike(participants[1].id, participants[3].id, true);
+  await upsertLike(participants[3].id, participants[1].id, true);
+
+  return {
+    participants: participants.length,
+    likes: 4,
+  };
+}
+
+function createTestParticipant(args: {
+  email: string;
+  name: string;
+  age_range: ParticipantAnswers["age_range"];
+  preferred_age_ranges: NonNullable<ParticipantAnswers["preferred_age_ranges"]>;
+  gender: ParticipantAnswers["gender"];
+  interests: ParticipantAnswers["interests"];
+  location: string;
+  bio: string;
+  created_at: string;
+}): Participant {
+  const answers: ParticipantAnswers = {
+    name: args.name,
+    phone_number: "555-010-9999",
+    age_range: args.age_range,
+    preferred_age_ranges: args.preferred_age_ranges,
+    gender: args.gender,
+    interests: args.interests,
+    location: args.location,
+    bio: args.bio,
+    photo_urls: [],
+  };
+
+  return {
+    id: uuidv4(),
+    email: args.email,
+    name: args.name,
+    answers_json: JSON.stringify(answers),
+    created_at: args.created_at,
+    quiz_answers_json: "",
+  };
 }

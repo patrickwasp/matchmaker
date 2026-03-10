@@ -1,6 +1,8 @@
 import { internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 
+const TEST_EMAIL_DOMAIN = "@matchmaker.test";
+
 const participantValue = {
   id: v.string(),
   email: v.string(),
@@ -161,20 +163,30 @@ export const replaceQuizQuestions = internalMutation({
   },
 });
 
-export const initializeStorage = internalMutation({
-  args: {
-    questions: v.array(v.object(quizQuestionValue)),
-  },
-  handler: async (ctx, args) => {
-    const existing = await ctx.db.query("quizQuestions").first();
-    if (existing) {
-      return { seeded: false };
+export const deleteTestData = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const participants = await ctx.db.query("participants").collect();
+    const testParticipants = participants.filter((participant) =>
+      participant.email.endsWith(TEST_EMAIL_DOMAIN)
+    );
+
+    if (testParticipants.length === 0) {
+      return { participants: 0, likes: 0 };
     }
 
-    for (const question of args.questions) {
-      await ctx.db.insert("quizQuestions", question);
-    }
+    const testIds = new Set(testParticipants.map((participant) => participant.id));
+    const likes = await ctx.db.query("likes").collect();
+    const likesToDelete = likes.filter(
+      (like) => testIds.has(like.liker_id) || testIds.has(like.liked_id)
+    );
 
-    return { seeded: true };
+    await Promise.all(likesToDelete.map((like) => ctx.db.delete(like._id)));
+    await Promise.all(testParticipants.map((participant) => ctx.db.delete(participant._id)));
+
+    return {
+      participants: testParticipants.length,
+      likes: likesToDelete.length,
+    };
   },
 });

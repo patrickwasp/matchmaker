@@ -14,20 +14,9 @@
 
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
+import { isAdminEmail } from "@/lib/admin";
 import { authOptions } from "@/lib/auth";
 import { getAllParticipants } from "@/lib/storage";
-
-// ---------------------------------------------------------------------------
-// Admin guard
-// ---------------------------------------------------------------------------
-
-function isAdmin(email: string): boolean {
-  const adminEmails = (process.env.ADMIN_EMAILS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-  return adminEmails.includes(email.toLowerCase());
-}
 
 // ---------------------------------------------------------------------------
 // Handler
@@ -39,7 +28,7 @@ export async function POST() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  if (!isAdmin(session.user.email)) {
+  if (!isAdminEmail(session.user.email)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

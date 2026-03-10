@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { z } from "zod";
+import { isAdminEmail } from "@/lib/admin";
 import { authOptions } from "@/lib/auth";
 import { getQuizQuestions, replaceQuizQuestions } from "@/lib/storage";
 
@@ -25,14 +26,6 @@ const QuizQuestionsPayloadSchema = z.object({
     questions: z.array(QuizQuestionSchema).min(1).max(20),
 });
 
-function isAdmin(email: string): boolean {
-    const adminEmails = (process.env.ADMIN_EMAILS ?? "")
-        .split(",")
-        .map((value) => value.trim().toLowerCase())
-        .filter(Boolean);
-    return adminEmails.includes(email.toLowerCase());
-}
-
 export async function GET() {
     const session = await getServerSession(authOptions);
     if (!session?.user?.email) {
@@ -48,7 +41,7 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.email) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (!isAdmin(session.user.email)) {
+    if (!isAdminEmail(session.user.email)) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

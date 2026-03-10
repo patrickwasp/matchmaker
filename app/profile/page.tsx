@@ -440,6 +440,26 @@ function ProfilePageContent() {
     setForm((previous) => updater(previous));
   }
 
+  function buildCheckpointPayload() {
+    return {
+      ...form,
+      name: form.name?.trim(),
+      phone_number: form.phone_number?.trim(),
+      location: form.location?.trim() || undefined,
+      bio: form.bio?.trim() || undefined,
+    };
+  }
+
+  function saveCheckpoint() {
+    fetch("/api/checkpoint-profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildCheckpointPayload()),
+    }).catch(() => {
+      // silently ignore — checkpoint failures don't block navigation
+    });
+  }
+
   function goToPreviousProfileStep() {
     setValidationError(null);
     navigateToProfileStep(profileStepIndex - 1, "backward");
@@ -447,6 +467,7 @@ function ProfilePageContent() {
 
   function goToNextProfileStep() {
     setValidationError(null);
+    saveCheckpoint();
     navigateToProfileStep(profileStepIndex + 1, "forward");
   }
 
@@ -568,17 +589,10 @@ function ProfilePageContent() {
     setSavingProfile(true);
 
     try {
-      const response = await fetch("/api/submit-profile", {
+      const response = await fetch("/api/checkpoint-profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...form,
-          name: form.name?.trim(),
-          phone_number: form.phone_number?.trim(),
-          preferred_age_ranges: AGE_RANGES,
-          location: form.location?.trim() || undefined,
-          bio: form.bio?.trim() || undefined,
-        }),
+        body: JSON.stringify(buildCheckpointPayload()),
       });
 
       const data = await response.json();
@@ -651,7 +665,7 @@ function ProfilePageContent() {
   return (
     <div className="min-h-screen bg-white flex flex-col [transform:translateZ(0)]">
       <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-5 py-3">
-        <p className="text-base font-bold text-rose-600">Matchmaker</p>
+        <p className="text-base font-bold text-rose-600">Matchmaker T.O.</p>
         <div className="flex items-center gap-2">
           {hasSavedProfile && (
             <button
@@ -810,7 +824,7 @@ function ProfilePageContent() {
                           }))
                         }
                         onKeyDown={handleTextStepKeyDown}
-                        placeholder="Austin, TX"
+                        placeholder="Toronto"
                         className="w-full rounded-[28px] border border-rose-100 bg-rose-50/60 px-5 py-5 text-xl text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-rose-300 focus:bg-white focus:ring-4 focus:ring-rose-100"
                       />
                     )}

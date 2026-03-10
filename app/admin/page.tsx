@@ -133,7 +133,7 @@ export default function AdminPage() {
                 <nav className="flex flex-col gap-3 rounded-[28px] border border-white/70 bg-white/90 px-4 py-4 shadow-[0_18px_60px_rgba(148,24,70,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
                     <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.28em] text-rose-500">
-                            Matchmaker
+                            Matchmaker1
                         </p>
                         <h1 className="text-2xl font-semibold text-slate-900">Admin</h1>
                         <p className="text-sm text-slate-500">{session?.user?.email}</p>

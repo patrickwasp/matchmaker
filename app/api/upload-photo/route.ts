@@ -2,7 +2,8 @@
  * POST /api/upload-photo
  *
  * Accepts a single WebP image file (FormData field "file") and uploads it to
- * Vercel Blob Storage. Returns the public URL of the uploaded blob.
+ * Vercel Blob Storage. Returns a relative app path that serves the private
+ * blob through a serverless route.
  *
  * The blob is stored under profiles/{sanitised-email}/{timestamp}.webp so
  * ownership can be verified by the delete endpoint.
@@ -12,6 +13,7 @@ import { put } from "@vercel/blob";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
+import { buildPhotoProxyPath } from "@/lib/photoUrls";
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2 MB
 
@@ -20,6 +22,16 @@ export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return NextResponse.json(
+      {
+        error:
+          "Blob storage is not configured locally. Run `vercel link` and `vercel env pull .env.local`, then restart the dev server.",
+      },
+      { status: 500 }
+    );
   }
 
   // 2. Parse multipart form
@@ -53,14 +65,22 @@ export async function POST(request: NextRequest) {
   // 4. Upload to Vercel Blob
   try {
     const blob = await put(filename, file, {
-      access: "public",
+      access: "private",
       contentType: "image/webp",
     });
 
-    return NextResponse.json({ url: blob.url });
-  } catch {
+    const photoUrl = buildPhotoProxyPath(blob.pathname);
+
+    return NextResponse.json({ url: photoUrl });
+  } catch (error) {
+    console.error("Blob upload failed", error);
     return NextResponse.json(
-      { error: "Upload failed. Please try again." },
+      {
+        error:
+          error instanceof Error && process.env.NODE_ENV !== "production"
+            ? `Upload failed: ${error.message}`
+            : "Upload failed. Please check your blob storage configuration.",
+      },
       { status: 502 }
     );
   }

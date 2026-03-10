@@ -13,6 +13,7 @@ import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import { authOptions } from "@/lib/auth";
 import { AGE_RANGES, INTEREST_OPTIONS } from "@/lib/profile";
+import { isPhotoReference } from "@/lib/photoUrls";
 import {
   appendParticipant,
   getParticipantByEmail,
@@ -33,7 +34,7 @@ const CheckpointSchema = z.object({
   interests: z.array(z.enum(interestValues)).optional(),
   location: z.string().trim().max(100).optional(),
   bio: z.string().trim().max(500).optional(),
-  photo_urls: z.array(z.string().url()).max(3).optional(),
+  photo_urls: z.array(z.string().refine(isPhotoReference, "Invalid photo reference")).max(3).optional(),
 });
 
 export async function POST(request: NextRequest) {

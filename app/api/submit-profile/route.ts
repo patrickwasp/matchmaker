@@ -13,6 +13,7 @@ import { getServerSession } from "next-auth/next";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import { authOptions } from "@/lib/auth";
+import { isPhotoReference } from "@/lib/photoUrls";
 import { AGE_RANGES, INTEREST_OPTIONS, INTEREST_LIMIT } from "@/lib/profile";
 import {
   appendParticipant,
@@ -61,7 +62,7 @@ const AnswersSchema = z.object({
     .length(INTEREST_LIMIT),
   location: z.string().trim().max(100).optional(),
   bio: z.string().trim().max(500).optional(),
-  photo_urls: z.array(z.string().url()).max(3).optional(),
+  photo_urls: z.array(z.string().refine(isPhotoReference, "Invalid photo reference")).max(3).optional(),
 });
 
 // ---------------------------------------------------------------------------

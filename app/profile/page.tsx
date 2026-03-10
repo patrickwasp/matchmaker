@@ -103,6 +103,33 @@ function extractValidationMessage(payload: unknown): string | null {
 const CROP_VIEWPORT = 280; // display px
 const CROP_OUTPUT = 1024;  // output px (square WebP)
 
+function getCropImageSize(image: HTMLImageElement) {
+  return {
+    width: image.naturalWidth || image.width,
+    height: image.naturalHeight || image.height,
+  };
+}
+
+function getCropMinScale(image: HTMLImageElement) {
+  const { width, height } = getCropImageSize(image);
+  return CROP_VIEWPORT / Math.min(width, height);
+}
+
+function clampCropOffset(
+  image: HTMLImageElement,
+  nextOffset: { x: number; y: number },
+  nextScale: number,
+) {
+  const { width, height } = getCropImageSize(image);
+  const scaledWidth = width * nextScale;
+  const scaledHeight = height * nextScale;
+
+  return {
+    x: Math.min(0, Math.max(CROP_VIEWPORT - scaledWidth, nextOffset.x)),
+    y: Math.min(0, Math.max(CROP_VIEWPORT - scaledHeight, nextOffset.y)),
+  };
+}
+
 function ImageCropModal({
   file,
   onConfirm,
@@ -118,19 +145,33 @@ function ImageCropModal({
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [cropError, setCropError] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const offsetAtDragStartRef = useRef({ x: 0, y: 0 });
+  const liveStateRef = useRef({
+    imageEl: null as HTMLImageElement | null,
+    scale: 1,
+    offset: { x: 0, y: 0 },
+  });
+  const pinchRef = useRef<{
+    startDistance: number;
+    startScale: number;
+    imagePoint: { x: number; y: number };
+    midpoint: { x: number; y: number };
+  } | null>(null);
+
+  liveStateRef.current = { imageEl, scale, offset };
 
   useEffect(() => {
     const url = URL.createObjectURL(file);
     setImageUrl(url);
     const img = new Image();
     img.onload = () => {
-      const minDim = Math.min(img.width, img.height);
-      const fillScale = CROP_VIEWPORT / minDim;
+      const { width, height } = getCropImageSize(img);
+      const fillScale = getCropMinScale(img);
       const initOffset = {
-        x: (CROP_VIEWPORT - img.width * fillScale) / 2,
-        y: (CROP_VIEWPORT - img.height * fillScale) / 2,
+        x: (CROP_VIEWPORT - width * fillScale) / 2,
+        y: (CROP_VIEWPORT - height * fillScale) / 2,
       };
       setImageEl(img);
       setScale(fillScale);
@@ -140,15 +181,139 @@ function ImageCropModal({
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
-  function clampOffset(newOffset: { x: number; y: number }, currentScale: number) {
-    if (!imageEl) return newOffset;
-    const scaledW = imageEl.width * currentScale;
-    const scaledH = imageEl.height * currentScale;
-    return {
-      x: Math.min(0, Math.max(CROP_VIEWPORT - scaledW, newOffset.x)),
-      y: Math.min(0, Math.max(CROP_VIEWPORT - scaledH, newOffset.y)),
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) {
+      return;
+    }
+    const cropElement = element;
+
+    function getMidpoint(touches: TouchList) {
+      const rect = cropElement.getBoundingClientRect();
+      return {
+        x: (touches[0].clientX + touches[1].clientX) / 2 - rect.left,
+        y: (touches[0].clientY + touches[1].clientY) / 2 - rect.top,
+      };
+    }
+
+    function getDistance(touches: TouchList) {
+      return Math.hypot(
+        touches[0].clientX - touches[1].clientX,
+        touches[0].clientY - touches[1].clientY,
+      );
+    }
+
+    function handleTouchStart(event: TouchEvent) {
+      const { imageEl, scale, offset } = liveStateRef.current;
+      if (!imageEl) {
+        return;
+      }
+
+      if (event.touches.length === 1) {
+        event.preventDefault();
+        pinchRef.current = null;
+        setIsDragging(true);
+        dragStartRef.current = {
+          x: event.touches[0].clientX,
+          y: event.touches[0].clientY,
+        };
+        offsetAtDragStartRef.current = { ...offset };
+      }
+
+      if (event.touches.length === 2) {
+        event.preventDefault();
+        setIsDragging(false);
+        const midpoint = getMidpoint(event.touches);
+        pinchRef.current = {
+          startDistance: getDistance(event.touches),
+          startScale: scale,
+          imagePoint: {
+            x: (midpoint.x - offset.x) / scale,
+            y: (midpoint.y - offset.y) / scale,
+          },
+          midpoint,
+        };
+      }
+    }
+
+    function handleTouchMove(event: TouchEvent) {
+      const { imageEl, scale } = liveStateRef.current;
+      if (!imageEl) {
+        return;
+      }
+
+      if (event.touches.length === 1 && !pinchRef.current) {
+        event.preventDefault();
+        const dx = event.touches[0].clientX - dragStartRef.current.x;
+        const dy = event.touches[0].clientY - dragStartRef.current.y;
+        setOffset(
+          clampCropOffset(
+            imageEl,
+            {
+              x: offsetAtDragStartRef.current.x + dx,
+              y: offsetAtDragStartRef.current.y + dy,
+            },
+            scale,
+          ),
+        );
+      }
+
+      if (event.touches.length === 2 && pinchRef.current) {
+        event.preventDefault();
+        const minScale = getCropMinScale(imageEl);
+        const maxScale = minScale * 4;
+        const nextScale = Math.min(
+          maxScale,
+          Math.max(
+            minScale,
+            pinchRef.current.startScale * (getDistance(event.touches) / pinchRef.current.startDistance),
+          ),
+        );
+        const midpoint = getMidpoint(event.touches);
+        const nextOffset = clampCropOffset(
+          imageEl,
+          {
+            x: midpoint.x - pinchRef.current.imagePoint.x * nextScale,
+            y: midpoint.y - pinchRef.current.imagePoint.y * nextScale,
+          },
+          nextScale,
+        );
+        setScale(nextScale);
+        setOffset(nextOffset);
+      }
+    }
+
+    function handleTouchEnd(event: TouchEvent) {
+      if (event.touches.length < 2) {
+        pinchRef.current = null;
+      }
+
+      if (event.touches.length === 1) {
+        dragStartRef.current = {
+          x: event.touches[0].clientX,
+          y: event.touches[0].clientY,
+        };
+        offsetAtDragStartRef.current = { ...liveStateRef.current.offset };
+        setIsDragging(true);
+      }
+
+      if (event.touches.length === 0) {
+        setIsDragging(false);
+      }
+    }
+
+    cropElement.addEventListener("touchstart", handleTouchStart, { passive: false });
+    cropElement.addEventListener("touchmove", handleTouchMove, { passive: false });
+    cropElement.addEventListener("touchend", handleTouchEnd, { passive: false });
+    cropElement.addEventListener("touchcancel", handleTouchEnd, { passive: false });
+
+    return () => {
+      cropElement.removeEventListener("touchstart", handleTouchStart);
+      cropElement.removeEventListener("touchmove", handleTouchMove);
+      cropElement.removeEventListener("touchend", handleTouchEnd);
+      cropElement.removeEventListener("touchcancel", handleTouchEnd);
     };
-  }
+  }, []);
 
   function handleScaleChange(newScale: number) {
     if (!imageEl) return;
@@ -159,7 +324,7 @@ function ImageCropModal({
       y: CROP_VIEWPORT / 2 - cy * newScale,
     };
     setScale(newScale);
-    setOffset(clampOffset(newOffset, newScale));
+    setOffset(clampCropOffset(imageEl, newOffset, newScale));
   }
 
   function startDrag(clientX: number, clientY: number) {
@@ -169,14 +334,15 @@ function ImageCropModal({
   }
 
   function moveDrag(clientX: number, clientY: number) {
-    if (!isDragging) return;
+    if (!isDragging || !imageEl) return;
     const dx = clientX - dragStartRef.current.x;
     const dy = clientY - dragStartRef.current.y;
     setOffset(
-      clampOffset(
+      clampCropOffset(
+        imageEl,
         { x: offsetAtDragStartRef.current.x + dx, y: offsetAtDragStartRef.current.y + dy },
-        scale
-      )
+        scale,
+      ),
     );
   }
 
@@ -203,61 +369,80 @@ function ImageCropModal({
         }
       },
       "image/webp",
-      0.85
+      0.8
     );
   }
 
-  const minScale = imageEl ? CROP_VIEWPORT / Math.min(imageEl.width, imageEl.height) : 0.1;
+  const minScale = imageEl ? getCropMinScale(imageEl) : 0.1;
   const maxScale = minScale * 4;
+  const imageSize = imageEl ? getCropImageSize(imageEl) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
       <div className="w-full max-w-sm rounded-3xl bg-white p-5 space-y-4">
         <h2 className="text-lg font-semibold text-slate-900">Crop your photo</h2>
-        <p className="text-sm text-slate-500">Drag to reposition · Use the slider to zoom</p>
+        <p className="text-sm text-slate-500">Drag to reposition · Pinch or use the slider to zoom</p>
 
         {imageUrl && (
           <>
             <div
+              ref={containerRef}
               className="relative mx-auto overflow-hidden rounded-2xl bg-slate-100 cursor-grab active:cursor-grabbing select-none"
-              style={{ width: CROP_VIEWPORT, height: CROP_VIEWPORT }}
+              style={{ width: CROP_VIEWPORT, height: CROP_VIEWPORT, touchAction: "none" }}
               onMouseDown={(e) => { e.preventDefault(); startDrag(e.clientX, e.clientY); }}
               onMouseMove={(e) => moveDrag(e.clientX, e.clientY)}
               onMouseUp={() => setIsDragging(false)}
               onMouseLeave={() => setIsDragging(false)}
-              onTouchStart={(e) => { if (e.touches.length === 1) startDrag(e.touches[0].clientX, e.touches[0].clientY); }}
-              onTouchMove={(e) => { if (e.touches.length === 1) moveDrag(e.touches[0].clientX, e.touches[0].clientY); }}
-              onTouchEnd={() => setIsDragging(false)}
             >
-              {imageEl && (
+              {imageEl && imageSize && (
                 <img
                   src={imageUrl}
                   alt="Crop preview"
                   draggable={false}
                   style={{
                     position: "absolute",
-                    width: imageEl.width * scale,
-                    height: imageEl.height * scale,
                     left: offset.x,
                     top: offset.y,
+                    width: imageSize.width,
+                    height: imageSize.height,
+                    transform: `scale(${scale})`,
+                    transformOrigin: "top left",
                     userSelect: "none",
                     pointerEvents: "none",
+                    maxWidth: "none",
                   }}
                 />
               )}
             </div>
 
-            <div className="space-y-1 px-1">
-              <input
-                type="range"
-                min={minScale}
-                max={maxScale}
-                step={0.01}
-                value={scale}
-                onChange={(e) => handleScaleChange(Number(e.target.value))}
-                className="w-full accent-rose-500"
-                aria-label="Zoom"
-              />
+            <div className="px-1">
+              <div className="flex items-center gap-3 text-slate-400">
+                <span aria-hidden="true" className="flex h-5 w-5 items-center justify-center">
+                  <svg viewBox="0 0 20 20" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="8.5" cy="8.5" r="4.75" />
+                    <path d="M5.75 8.5h5.5" />
+                    <path d="M12.25 12.25 16 16" />
+                  </svg>
+                </span>
+                <input
+                  type="range"
+                  min={minScale}
+                  max={maxScale}
+                  step={0.01}
+                  value={scale}
+                  onChange={(e) => handleScaleChange(Number(e.target.value))}
+                  className="w-full accent-rose-500"
+                  aria-label="Zoom"
+                />
+                <span aria-hidden="true" className="flex h-5 w-5 items-center justify-center text-slate-500">
+                  <svg viewBox="0 0 20 20" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="8.5" cy="8.5" r="4.75" />
+                    <path d="M5.75 8.5h5.5" />
+                    <path d="M8.5 5.75v5.5" />
+                    <path d="M12.25 12.25 16 16" />
+                  </svg>
+                </span>
+              </div>
             </div>
           </>
         )}
@@ -359,6 +544,8 @@ function ProfilePageContent() {
   const [error, setError] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [processingPhoto, setProcessingPhoto] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [loadingPhotoUrls, setLoadingPhotoUrls] = useState<string[]>([]);
   const [cropFile, setCropFile] = useState<File | null>(null);
   const [hasSavedProfile, setHasSavedProfile] = useState(false);
   const [motionDirection, setMotionDirection] = useState<MotionDirection>("forward");
@@ -580,24 +767,29 @@ function ProfilePageContent() {
     setForm((previous) => updater(previous));
   }
 
-  function buildCheckpointPayload() {
+  function buildCheckpointPayload(values: Partial<ParticipantAnswers> = form) {
     return {
-      ...form,
-      name: form.name?.trim(),
-      phone_number: form.phone_number?.trim(),
-      location: form.location?.trim() || undefined,
-      bio: form.bio?.trim() || undefined,
+      ...values,
+      name: values.name?.trim(),
+      phone_number: values.phone_number?.trim(),
+      location: values.location?.trim() || undefined,
+      bio: values.bio?.trim() || undefined,
     };
   }
 
-  function saveCheckpoint() {
-    fetch("/api/checkpoint-profile", {
+  async function saveCheckpoint(values: Partial<ParticipantAnswers> = form) {
+    const response = await fetch("/api/checkpoint-profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildCheckpointPayload()),
-    }).catch(() => {
-      // silently ignore — checkpoint failures don't block navigation
+      body: JSON.stringify(buildCheckpointPayload(values)),
     });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(extractValidationMessage(data) ?? "Could not save your profile progress.");
+    }
+
+    return data;
   }
 
   function goToPreviousProfileStep() {
@@ -607,7 +799,9 @@ function ProfilePageContent() {
 
   function goToNextProfileStep() {
     setValidationError(null);
-    saveCheckpoint();
+    saveCheckpoint().catch(() => {
+      // checkpoint failures should not block step navigation
+    });
     navigateToProfileStep(profileStepIndex + 1, "forward");
   }
 
@@ -713,43 +907,86 @@ function ProfilePageContent() {
     setCropFile(file);
   }
 
-  async function handleCropConfirm(blob: Blob) {
-    setCropFile(null);
-    setProcessingPhoto(true);
-
-    try {
+  function uploadPhotoBlob(blob: Blob) {
+    return new Promise<{ url: string }>((resolve, reject) => {
       const formData = new FormData();
       formData.append("file", blob, "photo.webp");
 
-      const response = await fetch("/api/upload-photo", {
-        method: "POST",
-        body: formData,
-      });
+      const request = new XMLHttpRequest();
+      request.open("POST", "/api/upload-photo");
+      request.responseType = "json";
 
-      const data = await response.json();
-      if (!response.ok) {
-        setPhotoError(data.error ?? "Upload failed. Please try again.");
-        return;
-      }
+      request.upload.onprogress = (event) => {
+        if (!event.lengthComputable) {
+          return;
+        }
 
-      const { url } = data as { url: string };
-      updateForm((previous) => ({
-        ...previous,
-        photo_urls: [...(previous.photo_urls ?? []), url].slice(0, 3),
-      }));
-    } catch {
-      setPhotoError("Upload failed. Please check your connection.");
+        setUploadProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      };
+
+      request.onload = () => {
+        const response = request.response;
+        const data = response && typeof response === "object"
+          ? response
+          : JSON.parse(request.responseText || "null");
+
+        if (request.status >= 200 && request.status < 300) {
+          resolve(data as { url: string });
+          return;
+        }
+
+        reject(new Error((data as { error?: string } | null)?.error ?? "Upload failed. Please try again."));
+      };
+
+      request.onerror = () => {
+        reject(new Error("Upload failed. Please check your connection."));
+      };
+
+      request.send(formData);
+    });
+  }
+
+  async function handleCropConfirm(blob: Blob) {
+    setCropFile(null);
+    setProcessingPhoto(true);
+    setUploadProgress(0);
+
+    try {
+      const { url } = await uploadPhotoBlob(blob);
+      setUploadProgress(100);
+      const nextForm = {
+        ...form,
+        photo_urls: [...(form.photo_urls ?? []), url].slice(0, 3),
+      };
+
+      await saveCheckpoint(nextForm);
+
+      setLoadingPhotoUrls((previous) => (previous.includes(url) ? previous : [...previous, url]));
+      updateForm(() => nextForm);
+    } catch (error) {
+      setPhotoError(error instanceof Error ? error.message : "Upload failed. Please check your connection.");
     } finally {
       setProcessingPhoto(false);
+      setUploadProgress(null);
     }
   }
 
   async function handleDeletePhoto(urlToDelete: string) {
-    // Optimistically remove from UI immediately
-    updateForm((previous) => ({
-      ...previous,
-      photo_urls: (previous.photo_urls ?? []).filter((u) => u !== urlToDelete),
-    }));
+    setLoadingPhotoUrls((previous) => previous.filter((url) => url !== urlToDelete));
+
+    const nextForm = {
+      ...form,
+      photo_urls: (form.photo_urls ?? []).filter((u) => u !== urlToDelete),
+    };
+
+    try {
+      await saveCheckpoint(nextForm);
+    } catch (error) {
+      setPhotoError(error instanceof Error ? error.message : "Could not save your updated photos.");
+      return;
+    }
+
+    updateForm(() => nextForm);
 
     // Best-effort delete from Vercel Blob
     fetch("/api/delete-photo", {
@@ -1111,8 +1348,14 @@ function ProfilePageContent() {
                         <div className="grid grid-cols-3 gap-3">
                           {Array.from({ length: 3 }).map((_, index) => {
                             const photoUrl = form.photo_urls?.[index];
+                            const isPhotoLoading = photoUrl
+                              ? loadingPhotoUrls.includes(photoUrl)
+                              : false;
                             const filledCount = form.photo_urls?.length ?? 0;
                             const isNextSlot = index === filledCount;
+                            const uploadLabel = uploadProgress !== null && uploadProgress < 100
+                              ? `Uploading ${uploadProgress}%`
+                              : "Saving…";
 
                             return (
                               <div key={index} className="relative aspect-square">
@@ -1121,8 +1364,22 @@ function ProfilePageContent() {
                                     <img
                                       src={photoUrl}
                                       alt={`Photo ${index + 1}`}
-                                      className="h-full w-full rounded-[24px] object-cover"
+                                      onLoad={() => {
+                                        setLoadingPhotoUrls((previous) => previous.filter((url) => url !== photoUrl));
+                                      }}
+                                      onError={() => {
+                                        setLoadingPhotoUrls((previous) => previous.filter((url) => url !== photoUrl));
+                                        setPhotoError("The uploaded image could not be displayed.");
+                                      }}
+                                      className={`h-full w-full rounded-[24px] object-cover transition-opacity ${
+                                        isPhotoLoading ? "opacity-0" : "opacity-100"
+                                      }`}
                                     />
+                                    {isPhotoLoading && (
+                                      <div className="absolute inset-0 flex items-center justify-center rounded-[24px] bg-white/75 backdrop-blur-[1px]">
+                                        <div className="h-8 w-8 animate-spin rounded-full border-2 border-rose-200 border-t-rose-500" />
+                                      </div>
+                                    )}
                                     <button
                                       type="button"
                                       onClick={() => handleDeletePhoto(photoUrl)}
@@ -1140,7 +1397,15 @@ function ProfilePageContent() {
                                     className="h-full w-full rounded-[24px] border-2 border-dashed border-rose-200 bg-rose-50/70 flex flex-col items-center justify-center gap-1 text-rose-400 transition hover:border-rose-300 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
                                   >
                                     {processingPhoto ? (
-                                      <span className="text-xs font-medium">Uploading…</span>
+                                      <span className="w-full px-4 text-center">
+                                        <span className="block text-xs font-medium text-rose-500">{uploadLabel}</span>
+                                        <span className="mt-2 block h-2 overflow-hidden rounded-full bg-rose-100">
+                                          <span
+                                            className="block h-full rounded-full bg-gradient-to-r from-rose-500 to-orange-400 transition-[width] duration-200"
+                                            style={{ width: `${uploadProgress ?? 100}%` }}
+                                          />
+                                        </span>
+                                      </span>
                                     ) : (
                                       <>
                                         <span className="text-2xl">+</span>

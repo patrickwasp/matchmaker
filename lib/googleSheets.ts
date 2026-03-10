@@ -8,6 +8,7 @@
 
 import { google } from "googleapis";
 import { DEFAULT_QUIZ_QUESTIONS, sortQuizQuestions } from "@/lib/quiz";
+import { canonicalizePhotoUrl } from "@/lib/photoUrls";
 import type { LikeRecord, Participant, ParticipantAnswers, QuizQuestion } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -41,48 +42,27 @@ const PARTICIPANTS_SHEET = "participants";
 const QUIZ_QUESTIONS_SHEET = "quiz_questions";
 const LIKES_SHEET = "likes";
 
-function getPublicAppUrl(): string | undefined {
-  const configured =
-    process.env.APP_URL ??
-    process.env.NEXTAUTH_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined);
-
-  if (!configured) {
-    return undefined;
-  }
-
-  return configured.replace(/\/$/, "");
-}
-
-function hasPhotoDataUrl(answersJson: string): boolean {
+function normalizeParticipantAnswersJson(answersJson: string): string {
   try {
     const answers = JSON.parse(answersJson) as ParticipantAnswers;
-    return Boolean(answers.photo_urls?.length) || Boolean(answers.photo_data_url);
-  } catch {
-    return false;
-  }
-}
-
-function buildParticipantPhotoFormula(
-  participantId: string,
-  answersJson: string
-): string {
-  const baseUrl = getPublicAppUrl();
-  try {
-    const answers = JSON.parse(answersJson) as ParticipantAnswers;
-    // Prefer Vercel Blob URL (direct link, no intermediate endpoint needed)
-    const firstBlobUrl = answers.photo_urls?.[0];
-    if (firstBlobUrl) {
-      return `=IMAGE("${firstBlobUrl}")`;
+    if (!answers.photo_urls?.length) {
+      return answersJson;
     }
-  } catch {
-    // fall through to legacy path
-  }
-  if (!baseUrl || !hasPhotoDataUrl(answersJson)) {
-    return "";
-  }
 
-  return `=IMAGE("${baseUrl}/api/participant-photo/${participantId}")`;
+    const normalizedPhotoUrls = answers.photo_urls.map((photoUrl) => canonicalizePhotoUrl(photoUrl));
+    const changed = normalizedPhotoUrls.some((photoUrl, index) => photoUrl !== answers.photo_urls?.[index]);
+
+    if (!changed) {
+      return answersJson;
+    }
+
+    return JSON.stringify({
+      ...answers,
+      photo_urls: normalizedPhotoUrls,
+    });
+  } catch {
+    return answersJson;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -91,13 +71,13 @@ function buildParticipantPhotoFormula(
 
 /**
  * Append a new participant row to the participants sheet.
- * Columns: id | email | name | answers_json | created_at | quiz_answers_json | photo_cell
+ * Columns: id | email | name | answers_json | created_at | quiz_answers_json
  */
 export async function appendParticipant(participant: Participant): Promise<void> {
   const sheets = getSheets();
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${PARTICIPANTS_SHEET}!A:G`,
+    range: `${PARTICIPANTS_SHEET}!A:F`,
     valueInputOption: "USER_ENTERED",
     requestBody: {
       values: [
@@ -108,7 +88,6 @@ export async function appendParticipant(participant: Participant): Promise<void>
           participant.answers_json,
           participant.created_at,
           participant.quiz_answers_json ?? "",
-          buildParticipantPhotoFormula(participant.id, participant.answers_json),
         ],
       ],
     },
@@ -122,7 +101,7 @@ export async function getAllParticipants(): Promise<Participant[]> {
   const sheets = getSheets();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${PARTICIPANTS_SHEET}!A:G`,
+    range: `${PARTICIPANTS_SHEET}!A:F`,
   });
 
   // Skip header row
@@ -133,7 +112,7 @@ export async function getAllParticipants(): Promise<Participant[]> {
       id: r[0],
       email: r[1],
       name: r[2],
-      answers_json: r[3],
+      answers_json: normalizeParticipantAnswersJson(r[3]),
       created_at: r[4],
       quiz_answers_json: r[5],
     }));
@@ -172,7 +151,7 @@ export async function updateParticipant(
   // Fetch all rows to find the row index
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${PARTICIPANTS_SHEET}!A:G`,
+    range: `${PARTICIPANTS_SHEET}!A:F`,
   });
 
   const rows = response.data.values ?? [];
@@ -184,8 +163,6 @@ export async function updateParticipant(
 
   // Sheets rows are 1-indexed; add 1 for the header offset
   const sheetsRow = rowIndex + 1;
-  const participantId = rows[rowIndex][0];
-
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
     requestBody: {
@@ -194,10 +171,6 @@ export async function updateParticipant(
         {
           range: `${PARTICIPANTS_SHEET}!C${sheetsRow}:D${sheetsRow}`,
           values: [[updated.name, updated.answers_json]],
-        },
-        {
-          range: `${PARTICIPANTS_SHEET}!G${sheetsRow}`,
-          values: [[buildParticipantPhotoFormula(participantId, updated.answers_json)]],
         },
       ],
     },
@@ -211,7 +184,7 @@ export async function updateParticipantQuizAnswers(
   const sheets = getSheets();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${PARTICIPANTS_SHEET}!A:G`,
+    range: `${PARTICIPANTS_SHEET}!A:F`,
   });
 
   const rows = response.data.values ?? [];
@@ -369,6 +342,9 @@ export async function initializeSheets(): Promise<void> {
   const existingTitles = new Set(
     (meta.data.sheets ?? []).map((s) => s.properties?.title ?? "")
   );
+  const participantSheetId = meta.data.sheets?.find(
+    (sheet) => sheet.properties?.title === PARTICIPANTS_SHEET
+  )?.properties?.sheetId;
 
   const addSheetRequests: object[] = [];
   if (!existingTitles.has(PARTICIPANTS_SHEET)) {
@@ -392,7 +368,7 @@ export async function initializeSheets(): Promise<void> {
   const checks = await sheets.spreadsheets.values.batchGet({
     spreadsheetId: SPREADSHEET_ID,
     ranges: [
-      `${PARTICIPANTS_SHEET}!A1:G1`,
+      `${PARTICIPANTS_SHEET}!A1:F1`,
       `${QUIZ_QUESTIONS_SHEET}!A1:E1`,
       `${QUIZ_QUESTIONS_SHEET}!A2:E`,
       `${LIKES_SHEET}!A1:E1`,
@@ -402,11 +378,34 @@ export async function initializeSheets(): Promise<void> {
   const [participantsHeader, quizQuestionsHeader, quizQuestionsRows, likesHeader] =
     checks.data.valueRanges ?? [];
 
+  if (
+    participantSheetId !== undefined &&
+    participantsHeader?.values?.[0]?.[6] === "photo_cell"
+  ) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            deleteDimension: {
+              range: {
+                sheetId: participantSheetId,
+                dimension: "COLUMNS",
+                startIndex: 6,
+                endIndex: 7,
+              },
+            },
+          },
+        ],
+      },
+    });
+  }
+
   const headerUpdates: { range: string; values: string[][] }[] = [];
-  if (!participantsHeader?.values?.length || participantsHeader.values[0].length < 7) {
+  if (!participantsHeader?.values?.length || participantsHeader.values[0].length < 6) {
     headerUpdates.push({
-      range: `${PARTICIPANTS_SHEET}!A1:G1`,
-      values: [["id", "email", "name", "answers_json", "created_at", "quiz_answers_json", "photo_cell"]],
+      range: `${PARTICIPANTS_SHEET}!A1:F1`,
+      values: [["id", "email", "name", "answers_json", "created_at", "quiz_answers_json"]],
     });
   }
   if (!quizQuestionsHeader?.values?.length) {

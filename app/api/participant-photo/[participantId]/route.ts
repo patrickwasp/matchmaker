@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getParticipantById } from "@/lib/googleSheets";
 import type { ParticipantAnswers } from "@/types";
 
@@ -16,7 +16,7 @@ function decodeDataUrl(dataUrl: string) {
 }
 
 export async function GET(
-  _request: Request,
+  request: NextRequest,
   context: { params: Promise<{ participantId: string }> }
 ) {
   const { participantId } = await context.params;
@@ -36,7 +36,10 @@ export async function GET(
   // Prefer Vercel Blob URL – redirect directly to the stored blob
   const firstBlobUrl = answers.photo_urls?.[0];
   if (firstBlobUrl) {
-    return NextResponse.redirect(firstBlobUrl, { status: 302 });
+    const redirectUrl = firstBlobUrl.startsWith("/api/photo/")
+      ? new URL(firstBlobUrl, request.url)
+      : firstBlobUrl;
+    return NextResponse.redirect(redirectUrl, { status: 302 });
   }
 
   // Legacy: serve base64 data URL from answers_json

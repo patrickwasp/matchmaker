@@ -13,6 +13,7 @@ import { getServerSession } from "next-auth/next";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import { authOptions } from "@/lib/auth";
+import { AGE_RANGES, INTEREST_OPTIONS, INTEREST_LIMIT } from "@/lib/profile";
 import {
   appendParticipant,
   getParticipantByEmail,
@@ -23,28 +24,48 @@ import {
 // Validation schema
 // ---------------------------------------------------------------------------
 
+const nameSchema = z
+  .string()
+  .trim()
+  .min(2)
+  .max(100)
+  .regex(/^(?=.{2,100}$)[\p{L}][\p{L}\p{M}' -]*$/u, "Enter a real first name or full name.");
+
+const phoneSchema = z
+  .string()
+  .trim()
+  .min(10)
+  .max(30)
+  .regex(/^[0-9()+.\-\s]+$/, "Enter a real phone number.")
+  .refine((value) => {
+    const digits = value.replace(/\D/g, "");
+    return digits.length >= 10 && digits.length <= 15;
+  }, "Enter a real phone number.");
+
 const AnswersSchema = z.object({
-  display_name: z.string().min(1).max(100),
+  name: nameSchema,
+  phone_number: phoneSchema,
   age_range: z.enum(["18-25", "26-35", "36-45", "46+"]),
-  gender: z.string().min(1).max(50),
+  preferred_age_ranges: z
+    .array(z.enum(AGE_RANGES))
+    .min(1)
+    .max(4),
+  gender: z.enum(["Man", "Woman"]),
   interests: z
     .array(
-      z.enum([
-        "music",
-        "sports",
-        "travel",
-        "cooking",
-        "reading",
-        "gaming",
-        "art",
-        "film",
+      z.enum(INTEREST_OPTIONS.map((interest) => interest.value) as [
+        (typeof INTEREST_OPTIONS)[number]["value"],
+        ...(typeof INTEREST_OPTIONS)[number]["value"][]
       ])
     )
-    .min(1)
-    .max(8),
-  looking_for: z.enum(["friendship", "romance", "networking"]),
-  location: z.string().max(100).optional(),
-  bio: z.string().max(500).optional(),
+    .length(INTEREST_LIMIT),
+  location: z.string().trim().max(100).optional(),
+  bio: z.string().trim().max(500).optional(),
+  photo_data_url: z
+    .string()
+    .max(45000)
+    .regex(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "Upload a valid image.")
+    .optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -82,14 +103,14 @@ export async function POST(request: NextRequest) {
   const existing = await getParticipantByEmail(email);
 
   if (existing) {
-    // Update display_name and answers
+    // Update name and answers
     await updateParticipant(email, {
-      display_name: answers.display_name,
+      name: answers.name,
       answers_json: answersJson,
     });
     return NextResponse.json({
       ...existing,
-      display_name: answers.display_name,
+      name: answers.name,
       answers_json: answersJson,
     });
   }
@@ -98,9 +119,10 @@ export async function POST(request: NextRequest) {
   const participant = {
     id: uuidv4(),
     email,
-    display_name: answers.display_name,
+    name: answers.name,
     answers_json: answersJson,
     created_at: new Date().toISOString(),
+    quiz_answers_json: "",
   };
   await appendParticipant(participant);
 

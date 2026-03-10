@@ -1,9 +1,10 @@
 /**
  * POST /api/run-matching
  *
- * Admin-only endpoint that reads all participants from the Google Sheet,
- * runs the compatibility matching algorithm, and writes results to the
- * "matches" sheet tab.
+ * Admin-only endpoint kept for compatibility.
+ *
+ * Matches are now derived at read time from mutual likes, so there is no
+ * persisted matches sheet to write to anymore.
  *
  * A user is considered an admin if their email is included in the
  * ADMIN_EMAILS environment variable (comma-separated list).
@@ -14,12 +15,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
-import {
-  getAllParticipants,
-  clearMatches,
-  appendMatches,
-} from "@/lib/googleSheets";
-import { generateMatches } from "@/utils/matching";
+import { getAllParticipants } from "@/lib/googleSheets";
 
 // ---------------------------------------------------------------------------
 // Admin guard
@@ -47,25 +43,12 @@ export async function POST() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // 1. Fetch all participants
   const participants = await getAllParticipants();
-  if (participants.length < 2) {
-    return NextResponse.json(
-      { error: "Not enough participants to match (need at least 2)" },
-      { status: 400 }
-    );
-  }
-
-  // 2. Generate matches
-  const matches = generateMatches(participants);
-
-  // 3. Persist: clear old matches then write new ones
-  await clearMatches();
-  await appendMatches(matches);
 
   return NextResponse.json({
-    matched: matches.length,
+    matched: 0,
     participants: participants.length,
-    matches,
+    runtime: true,
+    message: "Matches are calculated at runtime from mutual likes.",
   });
 }

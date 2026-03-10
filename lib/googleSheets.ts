@@ -7,7 +7,8 @@
  */
 
 import { google } from "googleapis";
-import type { Participant, Match } from "@/types";
+import { DEFAULT_QUIZ_QUESTIONS, sortQuizQuestions } from "@/lib/quiz";
+import type { LikeRecord, Participant, ParticipantAnswers, QuizQuestion } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -37,7 +38,42 @@ const SPREADSHEET_ID = process.env.GOOGLE_SPREADSHEET_ID!;
 
 // Sheet tab names
 const PARTICIPANTS_SHEET = "participants";
-const MATCHES_SHEET = "matches";
+const QUIZ_QUESTIONS_SHEET = "quiz_questions";
+const LIKES_SHEET = "likes";
+
+function getPublicAppUrl(): string | undefined {
+  const configured =
+    process.env.APP_URL ??
+    process.env.NEXTAUTH_URL ??
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined);
+
+  if (!configured) {
+    return undefined;
+  }
+
+  return configured.replace(/\/$/, "");
+}
+
+function hasPhotoDataUrl(answersJson: string): boolean {
+  try {
+    const answers = JSON.parse(answersJson) as ParticipantAnswers;
+    return Boolean(answers.photo_data_url);
+  } catch {
+    return false;
+  }
+}
+
+function buildParticipantPhotoFormula(
+  participantId: string,
+  answersJson: string
+): string {
+  const baseUrl = getPublicAppUrl();
+  if (!baseUrl || !hasPhotoDataUrl(answersJson)) {
+    return "";
+  }
+
+  return `=IMAGE("${baseUrl}/api/participant-photo/${participantId}")`;
+}
 
 // ---------------------------------------------------------------------------
 // Participants
@@ -45,22 +81,24 @@ const MATCHES_SHEET = "matches";
 
 /**
  * Append a new participant row to the participants sheet.
- * Columns: id | email | display_name | answers_json | created_at
+ * Columns: id | email | name | answers_json | created_at | quiz_answers_json | photo_cell
  */
 export async function appendParticipant(participant: Participant): Promise<void> {
   const sheets = getSheets();
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${PARTICIPANTS_SHEET}!A:E`,
-    valueInputOption: "RAW",
+    range: `${PARTICIPANTS_SHEET}!A:G`,
+    valueInputOption: "USER_ENTERED",
     requestBody: {
       values: [
         [
           participant.id,
           participant.email,
-          participant.display_name,
+          participant.name,
           participant.answers_json,
           participant.created_at,
+          participant.quiz_answers_json ?? "",
+          buildParticipantPhotoFormula(participant.id, participant.answers_json),
         ],
       ],
     },
@@ -74,19 +112,20 @@ export async function getAllParticipants(): Promise<Participant[]> {
   const sheets = getSheets();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    // Skip header row by starting at row 2
-    range: `${PARTICIPANTS_SHEET}!A2:E`,
+    range: `${PARTICIPANTS_SHEET}!A:G`,
   });
 
-  const rows = response.data.values ?? [];
+  // Skip header row
+  const rows = (response.data.values ?? []).slice(1);
   return rows
     .filter((r) => r.length >= 5)
     .map((r) => ({
       id: r[0],
       email: r[1],
-      display_name: r[2],
+      name: r[2],
       answers_json: r[3],
       created_at: r[4],
+      quiz_answers_json: r[5],
     }));
 }
 
@@ -112,18 +151,18 @@ export async function getParticipantById(
 
 /**
  * Update an existing participant row identified by email.
- * Re-writes display_name and answers_json.
+ * Re-writes name and answers_json.
  */
 export async function updateParticipant(
   email: string,
-  updated: Pick<Participant, "display_name" | "answers_json">
+  updated: Pick<Participant, "name" | "answers_json">
 ): Promise<void> {
   const sheets = getSheets();
 
   // Fetch all rows to find the row index
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${PARTICIPANTS_SHEET}!A:E`,
+    range: `${PARTICIPANTS_SHEET}!A:G`,
   });
 
   const rows = response.data.values ?? [];
@@ -135,87 +174,255 @@ export async function updateParticipant(
 
   // Sheets rows are 1-indexed; add 1 for the header offset
   const sheetsRow = rowIndex + 1;
-  await sheets.spreadsheets.values.update({
+  const participantId = rows[rowIndex][0];
+
+  await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${PARTICIPANTS_SHEET}!C${sheetsRow}:D${sheetsRow}`,
-    valueInputOption: "RAW",
     requestBody: {
-      values: [[updated.display_name, updated.answers_json]],
+      valueInputOption: "USER_ENTERED",
+      data: [
+        {
+          range: `${PARTICIPANTS_SHEET}!C${sheetsRow}:D${sheetsRow}`,
+          values: [[updated.name, updated.answers_json]],
+        },
+        {
+          range: `${PARTICIPANTS_SHEET}!G${sheetsRow}`,
+          values: [[buildParticipantPhotoFormula(participantId, updated.answers_json)]],
+        },
+      ],
     },
   });
 }
 
-// ---------------------------------------------------------------------------
-// Matches
-// ---------------------------------------------------------------------------
-
-/**
- * Append multiple match rows to the matches sheet.
- * Columns: match_id | participant_a_id | participant_b_id | score | revealed_at
- */
-export async function appendMatches(matches: Match[]): Promise<void> {
-  if (matches.length === 0) return;
-
+export async function updateParticipantQuizAnswers(
+  email: string,
+  quizAnswersJson: string
+): Promise<void> {
   const sheets = getSheets();
-  await sheets.spreadsheets.values.append({
+  const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${MATCHES_SHEET}!A:E`,
+    range: `${PARTICIPANTS_SHEET}!A:G`,
+  });
+
+  const rows = response.data.values ?? [];
+  const rowIndex = rows.findIndex((r) => r[1] === email);
+  if (rowIndex === -1) {
+    throw new Error(`Participant with email ${email} not found`);
+  }
+
+  const sheetsRow = rowIndex + 1;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${PARTICIPANTS_SHEET}!F${sheetsRow}`,
     valueInputOption: "RAW",
     requestBody: {
-      values: matches.map((m) => [
-        m.match_id,
-        m.participant_a_id,
-        m.participant_b_id,
-        m.score,
-        m.revealed_at,
+      values: [[quizAnswersJson]],
+    },
+  });
+}
+
+export async function getAllLikes(): Promise<LikeRecord[]> {
+  const sheets = getSheets();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${LIKES_SHEET}!A:E`,
+  });
+
+  const rows = (response.data.values ?? []).slice(1);
+  return rows
+    .filter((row) => row.length >= 5)
+    .map((row) => ({
+      liker_id: row[0],
+      liked_id: row[1],
+      liked: row[2] === "true",
+      created_at: row[3],
+      updated_at: row[4],
+    }));
+}
+
+export async function upsertLike(
+  likerId: string,
+  likedId: string,
+  liked: boolean
+): Promise<void> {
+  const sheets = getSheets();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${LIKES_SHEET}!A:E`,
+  });
+
+  const rows = response.data.values ?? [];
+  const rowIndex = rows.findIndex((row) => row[0] === likerId && row[1] === likedId);
+  const now = new Date().toISOString();
+
+  if (rowIndex === -1) {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${LIKES_SHEET}!A:E`,
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [[likerId, likedId, liked ? "true" : "false", now, now]],
+      },
+    });
+    return;
+  }
+
+  const sheetsRow = rowIndex + 1;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${LIKES_SHEET}!C${sheetsRow}:E${sheetsRow}`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [[liked ? "true" : "false", rows[rowIndex][3] || now, now]],
+    },
+  });
+}
+
+export async function getQuizQuestions(): Promise<QuizQuestion[]> {
+  const sheets = getSheets();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${QUIZ_QUESTIONS_SHEET}!A:E`,
+  });
+
+  const rows = (response.data.values ?? []).slice(1);
+  const parsed = rows
+    .filter((row) => row.length >= 5)
+    .map((row): QuizQuestion | null => {
+      try {
+        return {
+          id: row[0],
+          prompt: row[1],
+          options: JSON.parse(row[2]),
+          position: Number(row[3]) || 0,
+          enabled: row[4] !== "false",
+        } satisfies QuizQuestion;
+      } catch {
+        return null;
+      }
+    })
+    .filter((question): question is QuizQuestion => question !== null);
+
+  if (parsed.length === 0) {
+    return sortQuizQuestions(DEFAULT_QUIZ_QUESTIONS);
+  }
+
+  return sortQuizQuestions(parsed);
+}
+
+export async function replaceQuizQuestions(
+  questions: QuizQuestion[]
+): Promise<void> {
+  const sheets = getSheets();
+  const sortedQuestions = sortQuizQuestions(questions);
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${QUIZ_QUESTIONS_SHEET}!A2:E`,
+  });
+
+  if (sortedQuestions.length === 0) {
+    return;
+  }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${QUIZ_QUESTIONS_SHEET}!A2:E${sortedQuestions.length + 1}`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: sortedQuestions.map((question) => [
+        question.id,
+        question.prompt,
+        JSON.stringify(question.options),
+        question.position,
+        question.enabled ? "true" : "false",
       ]),
     },
   });
 }
 
+// ---------------------------------------------------------------------------
+// Sheet initialisation
+// ---------------------------------------------------------------------------
+
 /**
- * Return all match rows.
+ * Ensure all sheet tabs exist with the correct header rows.
+ * Safe to call multiple times – existing tabs/headers are left untouched.
  */
-export async function getAllMatches(): Promise<Match[]> {
+export async function initializeSheets(): Promise<void> {
   const sheets = getSheets();
-  const response = await sheets.spreadsheets.values.get({
+
+  // Fetch current sheet metadata to see which tabs already exist
+  const meta = await sheets.spreadsheets.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${MATCHES_SHEET}!A2:E`,
   });
-
-  const rows = response.data.values ?? [];
-  return rows
-    .filter((r) => r.length >= 5)
-    .map((r) => ({
-      match_id: r[0],
-      participant_a_id: r[1],
-      participant_b_id: r[2],
-      score: parseFloat(r[3]),
-      revealed_at: r[4],
-    }));
-}
-
-/**
- * Return all matches that involve a given participant ID.
- */
-export async function getMatchesForParticipant(
-  participantId: string
-): Promise<Match[]> {
-  const all = await getAllMatches();
-  return all.filter(
-    (m) =>
-      m.participant_a_id === participantId ||
-      m.participant_b_id === participantId
+  const existingTitles = new Set(
+    (meta.data.sheets ?? []).map((s) => s.properties?.title ?? "")
   );
-}
 
-/**
- * Delete all existing match rows (used before a fresh matching run).
- */
-export async function clearMatches(): Promise<void> {
-  const sheets = getSheets();
-  await sheets.spreadsheets.values.clear({
+  const addSheetRequests: object[] = [];
+  if (!existingTitles.has(PARTICIPANTS_SHEET)) {
+    addSheetRequests.push({ addSheet: { properties: { title: PARTICIPANTS_SHEET } } });
+  }
+  if (!existingTitles.has(QUIZ_QUESTIONS_SHEET)) {
+    addSheetRequests.push({ addSheet: { properties: { title: QUIZ_QUESTIONS_SHEET } } });
+  }
+  if (!existingTitles.has(LIKES_SHEET)) {
+    addSheetRequests.push({ addSheet: { properties: { title: LIKES_SHEET } } });
+  }
+
+  if (addSheetRequests.length > 0) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { requests: addSheetRequests },
+    });
+  }
+
+  // Write headers if the first row is empty
+  const checks = await sheets.spreadsheets.values.batchGet({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${MATCHES_SHEET}!A2:E`,
+    ranges: [
+      `${PARTICIPANTS_SHEET}!A1:G1`,
+      `${QUIZ_QUESTIONS_SHEET}!A1:E1`,
+      `${QUIZ_QUESTIONS_SHEET}!A2:E`,
+      `${LIKES_SHEET}!A1:E1`,
+    ],
   });
+
+  const [participantsHeader, quizQuestionsHeader, quizQuestionsRows, likesHeader] =
+    checks.data.valueRanges ?? [];
+
+  const headerUpdates: { range: string; values: string[][] }[] = [];
+  if (!participantsHeader?.values?.length || participantsHeader.values[0].length < 7) {
+    headerUpdates.push({
+      range: `${PARTICIPANTS_SHEET}!A1:G1`,
+      values: [["id", "email", "name", "answers_json", "created_at", "quiz_answers_json", "photo_cell"]],
+    });
+  }
+  if (!quizQuestionsHeader?.values?.length) {
+    headerUpdates.push({
+      range: `${QUIZ_QUESTIONS_SHEET}!A1:E1`,
+      values: [["id", "prompt", "options_json", "position", "enabled"]],
+    });
+  }
+  if (!likesHeader?.values?.length) {
+    headerUpdates.push({
+      range: `${LIKES_SHEET}!A1:E1`,
+      values: [["liker_id", "liked_id", "liked", "created_at", "updated_at"]],
+    });
+  }
+
+  if (headerUpdates.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: {
+        valueInputOption: "RAW",
+        data: headerUpdates,
+      },
+    });
+  }
+
+  if (!quizQuestionsRows?.values?.length) {
+    await replaceQuizQuestions(DEFAULT_QUIZ_QUESTIONS);
+  }
 }

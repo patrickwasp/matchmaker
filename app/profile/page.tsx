@@ -1,297 +1,1116 @@
 "use client";
 
-import { useSession, signOut } from "next-auth/react";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import type { ParticipantAnswers, AgeRange, Interest, LookingFor } from "@/types";
+import { signOut, useSession } from "next-auth/react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import {
+  AGE_RANGES,
+  GENDER_OPTIONS,
+  INTEREST_LIMIT,
+  INTEREST_OPTIONS,
+} from "@/lib/profile";
+import type {
+  ParticipantAnswers,
+  ParticipantQuizAnswers,
+  QuizQuestion,
+} from "@/types";
 
-const AGE_RANGES: AgeRange[] = ["18-25", "26-35", "36-45", "46+"];
+const MAX_PHOTO_DATA_URL_LENGTH = 45000;
+const MAX_PHOTO_DIMENSION = 320;
 
-const INTERESTS: { value: Interest; label: string; emoji: string }[] = [
-  { value: "music", label: "Music", emoji: "🎵" },
-  { value: "sports", label: "Sports", emoji: "⚽" },
-  { value: "travel", label: "Travel", emoji: "✈️" },
-  { value: "cooking", label: "Cooking", emoji: "🍳" },
-  { value: "reading", label: "Reading", emoji: "📚" },
-  { value: "gaming", label: "Gaming", emoji: "🎮" },
-  { value: "art", label: "Art", emoji: "🎨" },
-  { value: "film", label: "Film", emoji: "🎬" },
-];
+const PROFILE_STEPS = [
+  "name",
+  "age_range",
+  "gender",
+  "location",
+  "bio",
+  "phone_number",
+  "interests",
+  "photo",
+] as const;
 
-const LOOKING_FOR: { value: LookingFor; label: string }[] = [
-  { value: "friendship", label: "Friendship" },
-  { value: "romance", label: "Romance" },
-  { value: "networking", label: "Networking" },
-];
+type ProfileStepId = (typeof PROFILE_STEPS)[number];
+type MotionDirection = "forward" | "backward";
+type QuizStep =
+  | { type: "age-preference"; id: "preferred_age_ranges" }
+  | { type: "question"; id: string; question: QuizQuestion };
 
-export default function ProfilePage() {
+function optionButtonClasses(selected: boolean) {
+  return [
+    "w-full rounded-[28px] border px-5 py-5 text-left transition duration-200",
+    selected
+      ? "border-rose-500 bg-rose-500 text-white shadow-lg shadow-rose-200"
+      : "border-rose-100 bg-white text-slate-900 hover:border-rose-300 hover:bg-rose-50",
+  ].join(" ");
+}
+
+function checkboxButtonClasses(selected: boolean) {
+  return [
+    "flex w-full items-center gap-4 rounded-[24px] border px-4 py-4 text-left transition duration-200",
+    selected
+      ? "border-emerald-500 bg-emerald-50 text-emerald-950"
+      : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50",
+  ].join(" ");
+}
+
+function checkboxIndicator(selected: boolean) {
+  return [
+    "flex h-6 w-6 items-center justify-center rounded-md border text-sm font-bold transition",
+    selected
+      ? "border-emerald-500 bg-emerald-500 text-white"
+      : "border-slate-300 bg-white text-transparent",
+  ].join(" ");
+}
+
+function extractValidationMessage(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  if ("error" in payload && typeof payload.error === "string" && payload.error) {
+    return payload.error;
+  }
+
+  if (
+    "details" in payload &&
+    payload.details &&
+    typeof payload.details === "object" &&
+    "fieldErrors" in payload.details &&
+    payload.details.fieldErrors &&
+    typeof payload.details.fieldErrors === "object"
+  ) {
+    for (const value of Object.values(payload.details.fieldErrors)) {
+      if (Array.isArray(value)) {
+        const firstMessage = value.find((item) => typeof item === "string");
+        if (typeof firstMessage === "string") {
+          return firstMessage;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+async function compressImageToDataUrl(file: File): Promise<string> {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Please choose an image file.");
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = () => reject(new Error("Could not read that image."));
+      nextImage.src = objectUrl;
+    });
+
+    const scale = Math.min(1, MAX_PHOTO_DIMENSION / Math.max(image.width, image.height));
+    const width = Math.max(1, Math.round(image.width * scale));
+    const height = Math.max(1, Math.round(image.height * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Your browser could not prepare that image.");
+    }
+
+    context.drawImage(image, 0, 0, width, height);
+
+    const qualities = [0.82, 0.72, 0.62, 0.5, 0.4];
+    let dataUrl = canvas.toDataURL("image/jpeg", qualities[0]);
+
+    for (const quality of qualities.slice(1)) {
+      if (dataUrl.length <= MAX_PHOTO_DATA_URL_LENGTH) {
+        break;
+      }
+      dataUrl = canvas.toDataURL("image/jpeg", quality);
+    }
+
+    if (dataUrl.length > MAX_PHOTO_DATA_URL_LENGTH) {
+      throw new Error("That photo is still too large. Try a tighter crop.");
+    }
+
+    return dataUrl;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function getProfileTitle(step: ProfileStepId, gender?: ParticipantAnswers["gender"]) {
+  switch (step) {
+    case "name":
+      return "What's your name?";
+    case "age_range":
+      return "How old are you?";
+    case "gender":
+      return "I am a...";
+    case "location":
+      return "Where are you based?";
+    case "bio":
+      return gender === "Woman"
+        ? "Tell him about yourself"
+        : gender === "Man"
+          ? "Tell her about yourself"
+          : "Tell them about yourself";
+    case "phone_number":
+      return "What's your number?";
+    case "interests":
+      return "What are you into?";
+    case "photo":
+      return "Add a photo";
+    default:
+      return "";
+  }
+}
+
+function getProfileSubtitle(step: ProfileStepId) {
+  switch (step) {
+    case "phone_number":
+      return "Only someone who mutually matches with you will see this.";
+    case "interests":
+      return "Choose the three that feel most like you.";
+    case "photo":
+      return "A clear, simple photo works best.";
+    default:
+      return null;
+  }
+}
+
+function ProfilePageFallback() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(251,113,133,0.18),_transparent_30%),linear-gradient(180deg,_#fff8f1_0%,_#fff1f2_55%,_#ffe4e6_100%)]">
+      <p className="text-sm font-medium text-slate-500">Loading your profile…</p>
+    </div>
+  );
+}
+
+function ProfilePageContent() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [defaultPhase, setDefaultPhase] = useState<"profile" | "quiz">("profile");
+  const [phase, setPhase] = useState<"profile" | "quiz">("profile");
+  const [profileStepIndex, setProfileStepIndex] = useState(0);
+  const [quizStepIndex, setQuizStepIndex] = useState(0);
   const [form, setForm] = useState<Partial<ParticipantAnswers>>({
     interests: [],
+    preferred_age_ranges: AGE_RANGES,
   });
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
+  const [quizAnswers, setQuizAnswers] = useState<ParticipantQuizAnswers>({});
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingQuiz, setSavingQuiz] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [processingPhoto, setProcessingPhoto] = useState(false);
+  const [hasSavedProfile, setHasSavedProfile] = useState(false);
+  const [motionDirection, setMotionDirection] = useState<MotionDirection>("forward");
 
-  // Redirect unauthenticated users to the home page
-  useEffect(() => {
-    if (status === "unauthenticated") router.push("/");
-  }, [status, router]);
+  const currentProfileStep = PROFILE_STEPS[profileStepIndex];
+  const quizSteps = useMemo<QuizStep[]>(() => {
+    return [
+      { type: "age-preference", id: "preferred_age_ranges" },
+      ...quizQuestions.map(
+        (question): QuizStep => ({ type: "question", id: question.id, question })
+      ),
+    ];
+  }, [quizQuestions]);
+  const currentQuizStep = quizSteps[quizStepIndex];
+  const currentQuizQuestion = currentQuizStep?.type === "question" ? currentQuizStep.question : undefined;
+  const currentQuizAnswer = currentQuizQuestion ? quizAnswers[currentQuizQuestion.id] : undefined;
+  const quizComplete =
+    (form.preferred_age_ranges?.length ?? 0) > 0 &&
+    quizQuestions.every((question) => Boolean(quizAnswers[question.id]?.self));
 
-  // Pre-fill the form if the user already has a profile
+  const profileCardKey = `${phase}-${
+    phase === "profile"
+      ? currentProfileStep
+      : currentQuizStep?.type === "age-preference"
+        ? currentQuizStep.id
+        : currentQuizQuestion?.id ?? "quiz"
+  }`;
+  const agePreferenceAllSelected =
+    (form.preferred_age_ranges?.length ?? 0) === AGE_RANGES.length;
+
+  function buildProfileUrl(nextPhase: "profile" | "quiz", nextStepId: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("phase", nextPhase);
+    params.set("step", nextStepId);
+
+    const query = params.toString();
+    return query ? `${pathname}?${query}` : pathname;
+  }
+
+  function navigateToProfileStep(
+    nextIndex: number,
+    direction: MotionDirection,
+    historyMode: "push" | "replace" = "push"
+  ) {
+    const clampedIndex = Math.max(0, Math.min(nextIndex, PROFILE_STEPS.length - 1));
+    const url = buildProfileUrl("profile", PROFILE_STEPS[clampedIndex]);
+
+    setMotionDirection(direction);
+    setPhase("profile");
+    setProfileStepIndex(clampedIndex);
+
+    if (historyMode === "replace") {
+      router.replace(url, { scroll: false });
+      return;
+    }
+
+    router.push(url, { scroll: false });
+  }
+
+  function navigateToQuizStep(
+    nextIndex: number,
+    direction: MotionDirection,
+    historyMode: "push" | "replace" = "push"
+  ) {
+    const clampedIndex = Math.max(0, Math.min(nextIndex, quizSteps.length - 1));
+    const nextStep = quizSteps[clampedIndex];
+    if (!nextStep) {
+      return;
+    }
+
+    const url = buildProfileUrl("quiz", nextStep.id);
+
+    setMotionDirection(direction);
+    setPhase("quiz");
+    setQuizStepIndex(clampedIndex);
+
+    if (historyMode === "replace") {
+      router.replace(url, { scroll: false });
+      return;
+    }
+
+    router.push(url, { scroll: false });
+  }
+
   useEffect(() => {
-    if (status !== "authenticated") return;
-    fetch("/api/me")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.answers_json) {
-          try {
-            const answers: ParticipantAnswers = JSON.parse(data.answers_json);
-            setForm(answers);
-          } catch {
-            // ignore
-          }
+    if (status === "unauthenticated") {
+      router.push("/");
+    }
+  }, [router, status]);
+
+  useEffect(() => {
+    if (status !== "authenticated") {
+      if (status !== "loading") {
+        setLoadingProfile(false);
+      }
+      return;
+    }
+
+    let cancelled = false;
+
+    Promise.all([
+      fetch("/api/me").then((response) => (response.ok ? response.json() : null)),
+      fetch("/api/quiz-questions").then(async (response) => {
+        if (!response.ok) {
+          return [];
+        }
+        return (await response.json()) as QuizQuestion[];
+      }),
+    ])
+      .then(([participant, questions]) => {
+        if (cancelled) {
+          return;
+        }
+
+        const enabledQuestions = questions.filter((question) => question.enabled);
+        setQuizQuestions(enabledQuestions);
+
+        if (participant?.answers_json) {
+          const answers = JSON.parse(participant.answers_json) as ParticipantAnswers;
+          setForm({
+            ...answers,
+            interests: answers.interests ?? [],
+            preferred_age_ranges: answers.preferred_age_ranges?.length
+              ? answers.preferred_age_ranges
+              : AGE_RANGES,
+          });
+          setHasSavedProfile(true);
+        }
+
+        if (participant?.quiz_answers_json) {
+          setQuizAnswers(JSON.parse(participant.quiz_answers_json));
+          setDefaultPhase("profile");
+        } else if (participant?.answers_json) {
+          setDefaultPhase("quiz");
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) {
+          setError("Could not load your profile right now.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingProfile(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [status]);
 
-  function toggleInterest(interest: Interest) {
-    setForm((prev) => {
-      const current = prev.interests ?? [];
+  useEffect(() => {
+    if (loadingProfile || status !== "authenticated") {
+      return;
+    }
+
+    const requestedPhase = searchParams.get("phase");
+    const requestedStep = searchParams.get("step");
+
+    const resolvedPhase =
+      requestedPhase === "quiz" && hasSavedProfile
+        ? "quiz"
+        : requestedPhase === "profile"
+          ? "profile"
+          : defaultPhase;
+
+    if (resolvedPhase === "quiz") {
+      const nextIndex = quizSteps.findIndex((step) => step.id === requestedStep);
+      const resolvedIndex = nextIndex >= 0 ? nextIndex : 0;
+      const resolvedStep = quizSteps[resolvedIndex];
+
+      if (!resolvedStep) {
+        return;
+      }
+
+      if (phase !== "quiz" || quizStepIndex !== resolvedIndex) {
+        setPhase("quiz");
+        setQuizStepIndex(resolvedIndex);
+      }
+
+      if (requestedPhase !== "quiz" || requestedStep !== resolvedStep.id) {
+        router.replace(buildProfileUrl("quiz", resolvedStep.id), { scroll: false });
+      }
+
+      return;
+    }
+
+    const nextIndex = PROFILE_STEPS.indexOf((requestedStep ?? "") as ProfileStepId);
+    const resolvedIndex = nextIndex >= 0 ? nextIndex : 0;
+    const resolvedStep = PROFILE_STEPS[resolvedIndex];
+
+    if (phase !== "profile" || profileStepIndex !== resolvedIndex) {
+      setPhase("profile");
+      setProfileStepIndex(resolvedIndex);
+    }
+
+    if (requestedPhase !== "profile" || requestedStep !== resolvedStep) {
+      router.replace(buildProfileUrl("profile", resolvedStep), { scroll: false });
+    }
+  }, [
+    defaultPhase,
+    hasSavedProfile,
+    loadingProfile,
+    phase,
+    profileStepIndex,
+    quizStepIndex,
+    quizSteps,
+    router,
+    searchParams,
+    status,
+  ]);
+
+  function updateForm(
+    updater: (previous: Partial<ParticipantAnswers>) => Partial<ParticipantAnswers>
+  ) {
+    setError(null);
+    setForm((previous) => updater(previous));
+  }
+
+  function goToPreviousProfileStep() {
+    navigateToProfileStep(profileStepIndex - 1, "backward");
+  }
+
+  function goToNextProfileStep() {
+    navigateToProfileStep(profileStepIndex + 1, "forward");
+  }
+
+  function goToPreviousQuizStep() {
+    navigateToQuizStep(quizStepIndex - 1, "backward");
+  }
+
+  function goToNextQuizStep() {
+    navigateToQuizStep(quizStepIndex + 1, "forward");
+  }
+
+  function toggleInterest(interest: ParticipantAnswers["interests"][number]) {
+    updateForm((previous) => {
+      const currentInterests = previous.interests ?? [];
+
+      if (currentInterests.includes(interest)) {
+        return {
+          ...previous,
+          interests: currentInterests.filter((item) => item !== interest),
+        };
+      }
+
+      if (currentInterests.length >= INTEREST_LIMIT) {
+        return previous;
+      }
+
       return {
-        ...prev,
-        interests: current.includes(interest)
-          ? current.filter((i) => i !== interest)
-          : [...current, interest],
+        ...previous,
+        interests: [...currentInterests, interest],
       };
     });
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  function togglePreferredAge(ageRange: ParticipantAnswers["age_range"]) {
+    updateForm((previous) => {
+      const currentRanges = previous.preferred_age_ranges ?? [];
+      return {
+        ...previous,
+        preferred_age_ranges: currentRanges.includes(ageRange)
+          ? currentRanges.filter((item) => item !== ageRange)
+          : [...currentRanges, ageRange],
+      };
+    });
+  }
+
+  function updateQuizAnswer(
+    questionId: string,
+    updater: (previous: ParticipantQuizAnswers[string] | undefined) => ParticipantQuizAnswers[string]
+  ) {
     setError(null);
-    setSaving(true);
-    try {
-      const res = await fetch("/api/submit-profile", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? "Something went wrong.");
-      } else {
-        setSaved(true);
-        setTimeout(() => setSaved(false), 3000);
-      }
-    } catch {
-      setError("Network error – please try again.");
-    } finally {
-      setSaving(false);
+    setQuizAnswers((previous) => ({
+      ...previous,
+      [questionId]: updater(previous[questionId]),
+    }));
+  }
+
+  function canContinueProfile() {
+    switch (currentProfileStep) {
+      case "name":
+        return Boolean(form.name?.trim());
+      case "age_range":
+        return Boolean(form.age_range);
+      case "gender":
+        return Boolean(form.gender);
+      case "location":
+        return true;
+      case "bio":
+        return true;
+      case "phone_number":
+        return Boolean(form.phone_number?.trim());
+      case "interests":
+        return (form.interests?.length ?? 0) === INTEREST_LIMIT;
+      case "photo":
+        return !processingPhoto;
+      default:
+        return false;
     }
   }
 
-  if (status === "loading") {
+  function canContinueQuiz() {
+    if (!currentQuizStep) {
+      return false;
+    }
+
+    if (currentQuizStep.type === "age-preference") {
+      return (form.preferred_age_ranges?.length ?? 0) > 0;
+    }
+
+    return Boolean(currentQuizAnswer?.self);
+  }
+
+  async function handlePhotoChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setPhotoError(null);
+    setProcessingPhoto(true);
+
+    try {
+      const compressedDataUrl = await compressImageToDataUrl(file);
+      setForm((previous) => ({
+        ...previous,
+        photo_data_url: compressedDataUrl,
+      }));
+    } catch (uploadError) {
+      const message =
+        uploadError instanceof Error ? uploadError.message : "That image could not be prepared.";
+      setPhotoError(message);
+    } finally {
+      setProcessingPhoto(false);
+      event.target.value = "";
+    }
+  }
+
+  async function handleSaveProfile() {
+    setError(null);
+    setSavingProfile(true);
+
+    try {
+      const response = await fetch("/api/submit-profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...form,
+          name: form.name?.trim(),
+          phone_number: form.phone_number?.trim(),
+          preferred_age_ranges: AGE_RANGES,
+          location: form.location?.trim() || undefined,
+          bio: form.bio?.trim() || undefined,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setError(extractValidationMessage(data) ?? "Something went wrong.");
+        return;
+      }
+
+      setHasSavedProfile(true);
+      navigateToQuizStep(0, "forward");
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  async function handleSaveQuiz() {
+    if (!quizComplete) {
+      return;
+    }
+
+    setError(null);
+    setSavingQuiz(true);
+
+    try {
+      const response = await fetch("/api/submit-quiz", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          preferred_age_ranges:
+            form.preferred_age_ranges?.length ? form.preferred_age_ranges : AGE_RANGES,
+          answers: quizAnswers,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setError(extractValidationMessage(data) ?? "Something went wrong.");
+        return;
+      }
+
+      router.push("/matches");
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setSavingQuiz(false);
+    }
+  }
+
+  function handleTextStepKeyDown(
+    event: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>
+  ) {
+    if (event.key === "Enter" && currentProfileStep !== "bio" && canContinueProfile()) {
+      event.preventDefault();
+      if (currentProfileStep !== "photo") {
+        goToNextProfileStep();
+      }
+    }
+  }
+
+  if (status === "loading" || loadingProfile) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <p className="text-gray-400">Loading…</p>
+      <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(251,113,133,0.18),_transparent_30%),linear-gradient(180deg,_#fff8f1_0%,_#fff1f2_55%,_#ffe4e6_100%)]">
+        <p className="text-sm font-medium text-slate-500">Loading your profile…</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-rose-50 to-pink-100 px-4 py-10">
-      {/* Nav */}
-      <nav className="mx-auto mb-8 flex max-w-2xl items-center justify-between rounded-xl bg-white p-4 shadow">
-        <span className="text-xl font-bold text-rose-600">💘 Matchmaker</span>
-        <div className="flex items-center gap-4">
-          <span className="hidden text-sm text-gray-600 sm:block">
-            {session?.user?.email}
-          </span>
-          <button
-            onClick={() => router.push("/matches")}
-            className="rounded-full bg-rose-50 px-4 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-100"
-          >
-            My Matches
-          </button>
-          <button
-            onClick={() => signOut({ callbackUrl: "/" })}
-            className="rounded-full bg-gray-100 px-4 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-200"
-          >
-            Sign out
-          </button>
-        </div>
-      </nav>
-
-      {/* Form card */}
-      <div className="mx-auto max-w-2xl rounded-2xl bg-white p-8 shadow-xl">
-        <h2 className="mb-1 text-2xl font-bold text-gray-900">
-          Your Matchmaking Profile
-        </h2>
-        <p className="mb-6 text-sm text-gray-500">
-          Fill in your details so we can find your best matches.
-        </p>
-
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Display name */}
+    <div className="min-h-screen overflow-y-auto bg-[radial-gradient(circle_at_top,_rgba(251,113,133,0.18),_transparent_30%),linear-gradient(180deg,_#fff8f1_0%,_#fff1f2_55%,_#ffe4e6_100%)] px-4 py-4 sm:px-6">
+      <div className="mx-auto flex max-w-md flex-col gap-4 [transform:translateZ(0)]">
+        <nav className="flex items-center justify-between rounded-[28px] border border-white/70 bg-white/90 px-4 py-3 shadow-[0_18px_60px_rgba(148,24,70,0.08)] backdrop-blur">
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Display Name *
-            </label>
-            <input
-              type="text"
-              required
-              value={form.display_name ?? ""}
-              onChange={(e) =>
-                setForm((p) => ({ ...p, display_name: e.target.value }))
-              }
-              placeholder="How you'll appear to matches"
-              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-200"
-            />
-          </div>
-
-          {/* Gender */}
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Gender *
-            </label>
-            <input
-              type="text"
-              required
-              value={form.gender ?? ""}
-              onChange={(e) =>
-                setForm((p) => ({ ...p, gender: e.target.value }))
-              }
-              placeholder="e.g. Man, Woman, Non-binary, …"
-              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-200"
-            />
-          </div>
-
-          {/* Age range */}
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">
-              Age Range *
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {AGE_RANGES.map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setForm((p) => ({ ...p, age_range: r }))}
-                  className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
-                    form.age_range === r
-                      ? "bg-rose-500 text-white shadow"
-                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                  }`}
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Interests */}
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">
-              Interests * (select at least one)
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {INTERESTS.map(({ value, label, emoji }) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => toggleInterest(value)}
-                  className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition ${
-                    form.interests?.includes(value)
-                      ? "bg-rose-500 text-white shadow"
-                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                  }`}
-                >
-                  <span>{emoji}</span>
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Looking for */}
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">
-              I&apos;m looking for *
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {LOOKING_FOR.map(({ value, label }) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setForm((p) => ({ ...p, looking_for: value }))}
-                  className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
-                    form.looking_for === value
-                      ? "bg-rose-500 text-white shadow"
-                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Location (optional) */}
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Location{" "}
-              <span className="font-normal text-gray-400">(optional)</span>
-            </label>
-            <input
-              type="text"
-              value={form.location ?? ""}
-              onChange={(e) =>
-                setForm((p) => ({ ...p, location: e.target.value }))
-              }
-              placeholder="e.g. New York, Remote…"
-              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-200"
-            />
-          </div>
-
-          {/* Bio (optional) */}
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Short Bio{" "}
-              <span className="font-normal text-gray-400">(optional)</span>
-            </label>
-            <textarea
-              value={form.bio ?? ""}
-              onChange={(e) =>
-                setForm((p) => ({ ...p, bio: e.target.value }))
-              }
-              rows={3}
-              maxLength={500}
-              placeholder="Tell potential matches a bit about yourself…"
-              className="w-full resize-none rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-200"
-            />
-          </div>
-
-          {/* Error */}
-          {error && (
-            <p className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-600">
-              {error}
+            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-rose-500">
+              Matchmaker
             </p>
-          )}
+            <p className="text-sm font-semibold text-slate-900">
+              {phase === "profile" ? "Profile" : "Quiz"}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {hasSavedProfile && (
+              <button
+                onClick={() => router.push("/matches")}
+                className="rounded-full border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-600 transition hover:border-rose-300 hover:bg-rose-50"
+              >
+                Results
+              </button>
+            )}
+            <button
+              onClick={() => signOut({ callbackUrl: "/" })}
+              className="rounded-full bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700"
+            >
+              Sign out
+            </button>
+          </div>
+        </nav>
 
-          {/* Submit */}
-          <button
-            type="submit"
-            disabled={saving}
-            className="w-full rounded-full bg-rose-500 py-3 text-sm font-semibold text-white shadow hover:bg-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-400 disabled:opacity-50"
+        <section className="flex min-h-[calc(100vh-7.5rem)] flex-col overflow-hidden rounded-[32px] border border-white/80 bg-white/92 px-5 py-5 shadow-[var(--card-shadow)] backdrop-blur sm:px-6">
+          <div className="mb-5 overflow-hidden rounded-full bg-rose-100/70">
+            <div
+              className="h-2 rounded-full bg-gradient-to-r from-rose-500 to-orange-400 transition-all"
+              style={{
+                width:
+                  phase === "profile"
+                    ? `${((profileStepIndex + 1) / PROFILE_STEPS.length) * 100}%`
+                    : `${((quizStepIndex + 1) / Math.max(quizSteps.length, 1)) * 100}%`,
+              }}
+            />
+          </div>
+
+          <AnimatePresence
+            mode="wait"
+            initial={false}
+            custom={motionDirection}
           >
-            {saving ? "Saving…" : saved ? "✅ Saved!" : "Save Profile"}
-          </button>
-        </form>
+          <motion.div
+            key={profileCardKey}
+            custom={motionDirection}
+            variants={{
+              enter: (dir: MotionDirection) => ({ x: dir === "forward" ? 32 : -32, opacity: 0 }),
+              center: { x: 0, opacity: 1 },
+              exit: (dir: MotionDirection) => ({ x: dir === "forward" ? -32 : 32, opacity: 0 }),
+            }}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="flex min-h-0 flex-1 flex-col justify-between gap-6"
+          >
+            {phase === "profile" ? (
+              <>
+                <div className="flex flex-1 flex-col justify-center">
+                  <h1 className="text-3xl font-semibold leading-tight text-slate-950">
+                    {getProfileTitle(currentProfileStep, form.gender)}
+                  </h1>
+                  {getProfileSubtitle(currentProfileStep) && (
+                    <p className="mt-3 max-w-sm text-sm leading-6 text-slate-500">
+                      {getProfileSubtitle(currentProfileStep)}
+                    </p>
+                  )}
+
+                  <div className="mt-8 space-y-5">
+                    {currentProfileStep === "name" && (
+                      <input
+                        autoFocus
+                        type="text"
+                        maxLength={100}
+                        value={form.name ?? ""}
+                        onChange={(event) =>
+                          updateForm((previous) => ({
+                            ...previous,
+                            name: event.target.value,
+                          }))
+                        }
+                        onKeyDown={handleTextStepKeyDown}
+                        placeholder="Jamie"
+                        className="w-full rounded-[28px] border border-rose-100 bg-rose-50/60 px-5 py-5 text-xl text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-rose-300 focus:bg-white focus:ring-4 focus:ring-rose-100"
+                      />
+                    )}
+
+                    {currentProfileStep === "age_range" && (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {AGE_RANGES.map((ageRange) => {
+                          const selected = form.age_range === ageRange;
+                          return (
+                            <button
+                              key={ageRange}
+                              type="button"
+                              onClick={() =>
+                                updateForm((previous) => ({
+                                  ...previous,
+                                  age_range: ageRange,
+                                }))
+                              }
+                              className={optionButtonClasses(selected)}
+                            >
+                              <span className="block text-lg font-semibold">{ageRange}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {currentProfileStep === "gender" && (
+                      <div className="grid gap-3">
+                        {GENDER_OPTIONS.map((option) => {
+                          const selected = form.gender === option.value;
+                          return (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => {
+                                updateForm((previous) => ({
+                                  ...previous,
+                                  gender: option.value,
+                                }));
+                                navigateToProfileStep(profileStepIndex + 1, "forward");
+                              }}
+                              className={optionButtonClasses(selected)}
+                            >
+                              <span className="flex items-center gap-4">
+                                <span className="text-3xl">{option.emoji}</span>
+                                <span className="text-lg font-semibold">{option.label}</span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {currentProfileStep === "location" && (
+                      <input
+                        autoFocus
+                        type="text"
+                        maxLength={100}
+                        value={form.location ?? ""}
+                        onChange={(event) =>
+                          updateForm((previous) => ({
+                            ...previous,
+                            location: event.target.value,
+                          }))
+                        }
+                        onKeyDown={handleTextStepKeyDown}
+                        placeholder="Austin, TX"
+                        className="w-full rounded-[28px] border border-rose-100 bg-rose-50/60 px-5 py-5 text-xl text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-rose-300 focus:bg-white focus:ring-4 focus:ring-rose-100"
+                      />
+                    )}
+
+                    {currentProfileStep === "bio" && (
+                      <div>
+                        <textarea
+                          autoFocus
+                          rows={5}
+                          maxLength={500}
+                          value={form.bio ?? ""}
+                          onChange={(event) =>
+                            updateForm((previous) => ({
+                              ...previous,
+                              bio: event.target.value,
+                            }))
+                          }
+                          onKeyDown={handleTextStepKeyDown}
+                          placeholder="Confident, kind, funny, and actually down to make plans."
+                          className="w-full resize-none rounded-[28px] border border-rose-100 bg-rose-50/60 px-5 py-5 text-lg text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-rose-300 focus:bg-white focus:ring-4 focus:ring-rose-100"
+                        />
+                        <p className="mt-2 text-right text-xs text-slate-400">
+                          {(form.bio ?? "").length} / 500
+                        </p>
+                      </div>
+                    )}
+
+                    {currentProfileStep === "phone_number" && (
+                      <input
+                        autoFocus
+                        type="tel"
+                        maxLength={30}
+                        value={form.phone_number ?? ""}
+                        onChange={(event) =>
+                          updateForm((previous) => ({
+                            ...previous,
+                            phone_number: event.target.value,
+                          }))
+                        }
+                        onKeyDown={handleTextStepKeyDown}
+                        placeholder="(555) 123-4567"
+                        className="w-full rounded-[28px] border border-rose-100 bg-rose-50/60 px-5 py-5 text-xl text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-rose-300 focus:bg-white focus:ring-4 focus:ring-rose-100"
+                      />
+                    )}
+
+                    {currentProfileStep === "interests" && (
+                      <div className="space-y-4">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {INTEREST_OPTIONS.map((interest) => {
+                            const selected = form.interests?.includes(interest.value) ?? false;
+                            const disabled =
+                              !selected && (form.interests?.length ?? 0) >= INTEREST_LIMIT;
+
+                            return (
+                              <button
+                                key={interest.value}
+                                type="button"
+                                onClick={() => toggleInterest(interest.value)}
+                                disabled={disabled}
+                                className={`${optionButtonClasses(selected)} ${
+                                  disabled ? "cursor-not-allowed opacity-40" : ""
+                                }`}
+                              >
+                                <span className="flex items-center gap-4">
+                                  <span className="text-3xl">{interest.emoji}</span>
+                                  <span className="block text-lg font-semibold">{interest.label}</span>
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {currentProfileStep === "photo" && (
+                      <div className="space-y-5">
+                        <div className="rounded-[32px] border border-dashed border-rose-200 bg-rose-50/70 p-5 text-center">
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={handlePhotoChange}
+                          />
+
+                          {form.photo_data_url ? (
+                            <img
+                              src={form.photo_data_url}
+                              alt="Profile preview"
+                              className="mx-auto h-44 w-44 rounded-[32px] object-cover shadow-lg shadow-rose-100"
+                            />
+                          ) : (
+                            <div className="mx-auto flex h-44 w-44 items-center justify-center rounded-[32px] bg-white text-6xl shadow-inner shadow-rose-100">
+                              📷
+                            </div>
+                          )}
+
+                          <div className="mt-5 flex flex-col items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => fileInputRef.current?.click()}
+                              disabled={processingPhoto}
+                              className="rounded-full bg-slate-900 px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {processingPhoto
+                                ? "Preparing photo…"
+                                : form.photo_data_url
+                                  ? "Replace photo"
+                                  : "Choose a photo"}
+                            </button>
+
+                            {form.photo_data_url && !processingPhoto && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateForm((previous) => ({
+                                    ...previous,
+                                    photo_data_url: undefined,
+                                  }));
+                                  setPhotoError(null);
+                                }}
+                                className="text-sm font-medium text-slate-500 underline decoration-slate-300 underline-offset-4 transition hover:text-slate-700"
+                              >
+                                Remove photo
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {photoError && (
+                          <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                            {photoError}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="sticky bottom-0 mt-2 space-y-3 bg-white/92 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-4">
+                  {error && (
+                    <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>
+                  )}
+
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={goToPreviousProfileStep}
+                      disabled={profileStepIndex === 0}
+                      className="rounded-full border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Back
+                    </button>
+
+                    {currentProfileStep !== "photo" ? (
+                      <button
+                        type="button"
+                        onClick={goToNextProfileStep}
+                        disabled={!canContinueProfile()}
+                        className="flex-1 rounded-full bg-gradient-to-r from-rose-500 to-orange-400 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-rose-200 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {currentProfileStep === "location" || currentProfileStep === "bio"
+                          ? (form[currentProfileStep] ?? "").toString().trim()
+                            ? "Continue"
+                            : "Skip"
+                          : "Continue"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleSaveProfile}
+                        disabled={savingProfile || processingPhoto}
+                        className="flex-1 rounded-full bg-gradient-to-r from-rose-500 to-orange-400 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-rose-200 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {savingProfile ? "Saving profile…" : "Continue to quiz"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-1 flex-col justify-center">
+                  <h1 className="text-3xl font-semibold leading-tight text-slate-950">
+                    {currentQuizStep?.type === "age-preference"
+                      ? "What age range are you open to?"
+                      : currentQuizQuestion?.prompt ?? "Loading quiz"}
+                  </h1>
+                  <p className="mt-3 max-w-sm text-sm leading-6 text-slate-500">
+                    {currentQuizStep?.type === "age-preference"
+                      ? "This stays in the quiz so the profile stays about you."
+                      : "Pick the one that sounds most like you."}
+                  </p>
+
+                  {currentQuizStep?.type === "age-preference" && (
+                    <div className="mt-8 space-y-5">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-slate-500">Choose one or more</p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateForm((previous) => ({
+                              ...previous,
+                              preferred_age_ranges: agePreferenceAllSelected ? [] : AGE_RANGES,
+                            }))
+                          }
+                          className="rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                        >
+                          {agePreferenceAllSelected ? "Clear all" : "Select all"}
+                        </button>
+                      </div>
+
+                      <div className="grid gap-3">
+                        {AGE_RANGES.map((ageRange) => {
+                          const selected = form.preferred_age_ranges?.includes(ageRange) ?? false;
+                          return (
+                            <button
+                              key={ageRange}
+                              type="button"
+                              onClick={() => togglePreferredAge(ageRange)}
+                              className={checkboxButtonClasses(selected)}
+                            >
+                              <span className={checkboxIndicator(selected)}>✓</span>
+                              <span className="text-base font-semibold">{ageRange}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {currentQuizQuestion && currentQuizStep?.type === "question" && (
+                    <div className="mt-8 space-y-5">
+                      <div className="grid gap-3">
+                        {currentQuizQuestion.options.map((option) => {
+                          const selected = currentQuizAnswer?.self === option.value;
+                          return (
+                            <button
+                              key={`self-${option.value}`}
+                              type="button"
+                              onClick={() =>
+                                updateQuizAnswer(currentQuizQuestion.id, () => ({
+                                  self: option.value,
+                                }))
+                              }
+                              className={optionButtonClasses(selected)}
+                            >
+                              <span className="flex items-center gap-4">
+                                {option.emoji && <span className="text-3xl">{option.emoji}</span>}
+                                <span className="text-lg font-semibold">{option.label}</span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="sticky bottom-0 mt-2 space-y-3 bg-white/92 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-4">
+                  {error && (
+                    <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>
+                  )}
+
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (quizStepIndex === 0) {
+                          setMotionDirection("backward");
+                          navigateToProfileStep(PROFILE_STEPS.length - 1, "backward");
+                          return;
+                        }
+                        goToPreviousQuizStep();
+                      }}
+                      className="rounded-full border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                    >
+                      Back
+                    </button>
+
+                    {quizStepIndex < quizSteps.length - 1 ? (
+                      <button
+                        type="button"
+                        onClick={goToNextQuizStep}
+                        disabled={!canContinueQuiz()}
+                        className="flex-1 rounded-full bg-gradient-to-r from-rose-500 to-orange-400 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-rose-200 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Continue
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleSaveQuiz}
+                        disabled={!quizComplete || savingQuiz}
+                        className="flex-1 rounded-full bg-gradient-to-r from-rose-500 to-orange-400 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-rose-200 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {savingQuiz ? "Saving quiz…" : "See matches"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </motion.div>
+          </AnimatePresence>
+        </section>
       </div>
     </div>
+  );
+}
+
+export default function ProfilePage() {
+  return (
+    <Suspense fallback={<ProfilePageFallback />}>
+      <ProfilePageContent />
+    </Suspense>
   );
 }

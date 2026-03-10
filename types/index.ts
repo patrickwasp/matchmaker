@@ -22,7 +22,10 @@ export interface ParticipantAnswers {
   interests: Interest[];
   location?: string;
   bio?: string;
+  /** @deprecated Use photo_urls instead */
   photo_data_url?: string;
+  /** Vercel Blob URLs for profile photos (up to 3) */
+  photo_urls?: string[];
 }
 
 export interface QuizOption {
@@ -79,7 +82,9 @@ export interface MatchWithPartner {
     age_range: AgeRange;
     bio?: string;
     location?: string;
+    /** @deprecated Use photo_urls instead */
     photo_data_url?: string;
+    photo_urls?: string[];
     phone_number?: string;
   };
 }
@@ -91,7 +96,9 @@ export interface ResultsProfile {
   age_range: AgeRange;
   bio?: string;
   location?: string;
+  /** @deprecated Use photo_urls instead */
   photo_data_url?: string;
+  photo_urls?: string[];
   score: number;
   likedByMe: boolean;
   likedYou: boolean;

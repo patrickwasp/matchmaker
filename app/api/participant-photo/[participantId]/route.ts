@@ -33,6 +33,13 @@ export async function GET(
     return new NextResponse("Invalid profile data", { status: 500 });
   }
 
+  // Prefer Vercel Blob URL – redirect directly to the stored blob
+  const firstBlobUrl = answers.photo_urls?.[0];
+  if (firstBlobUrl) {
+    return NextResponse.redirect(firstBlobUrl, { status: 302 });
+  }
+
+  // Legacy: serve base64 data URL from answers_json
   if (!answers.photo_data_url) {
     return new NextResponse("No photo", { status: 404 });
   }

@@ -33,7 +33,7 @@ const CheckpointSchema = z.object({
   interests: z.array(z.enum(interestValues)).optional(),
   location: z.string().trim().max(100).optional(),
   bio: z.string().trim().max(500).optional(),
-  photo_data_url: z.string().max(45000).optional(),
+  photo_urls: z.array(z.string().url()).max(3).optional(),
 });
 
 export async function POST(request: NextRequest) {

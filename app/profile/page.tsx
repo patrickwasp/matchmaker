@@ -22,9 +22,6 @@ import type {
   QuizQuestion,
 } from "@/types";
 
-const MAX_PHOTO_DATA_URL_LENGTH = 45000;
-const MAX_PHOTO_DIMENSION = 320;
-
 const PROFILE_STEPS = [
   "name",
   "age_range",
@@ -99,54 +96,196 @@ function extractValidationMessage(payload: unknown): string | null {
   return null;
 }
 
-async function compressImageToDataUrl(file: File): Promise<string> {
-  if (!file.type.startsWith("image/")) {
-    throw new Error("Please choose an image file.");
+// ---------------------------------------------------------------------------
+// Image crop modal
+// ---------------------------------------------------------------------------
+
+const CROP_VIEWPORT = 280; // display px
+const CROP_OUTPUT = 1024;  // output px (square WebP)
+
+function ImageCropModal({
+  file,
+  onConfirm,
+  onCancel,
+}: {
+  file: File;
+  onConfirm: (blob: Blob) => void;
+  onCancel: () => void;
+}) {
+  const [imageEl, setImageEl] = useState<HTMLImageElement | null>(null);
+  const [imageUrl, setImageUrl] = useState<string>("");
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [cropError, setCropError] = useState<string | null>(null);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const offsetAtDragStartRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    setImageUrl(url);
+    const img = new Image();
+    img.onload = () => {
+      const minDim = Math.min(img.width, img.height);
+      const fillScale = CROP_VIEWPORT / minDim;
+      const initOffset = {
+        x: (CROP_VIEWPORT - img.width * fillScale) / 2,
+        y: (CROP_VIEWPORT - img.height * fillScale) / 2,
+      };
+      setImageEl(img);
+      setScale(fillScale);
+      setOffset(initOffset);
+    };
+    img.src = url;
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  function clampOffset(newOffset: { x: number; y: number }, currentScale: number) {
+    if (!imageEl) return newOffset;
+    const scaledW = imageEl.width * currentScale;
+    const scaledH = imageEl.height * currentScale;
+    return {
+      x: Math.min(0, Math.max(CROP_VIEWPORT - scaledW, newOffset.x)),
+      y: Math.min(0, Math.max(CROP_VIEWPORT - scaledH, newOffset.y)),
+    };
   }
 
-  const objectUrl = URL.createObjectURL(file);
+  function handleScaleChange(newScale: number) {
+    if (!imageEl) return;
+    const cx = (CROP_VIEWPORT / 2 - offset.x) / scale;
+    const cy = (CROP_VIEWPORT / 2 - offset.y) / scale;
+    const newOffset = {
+      x: CROP_VIEWPORT / 2 - cx * newScale,
+      y: CROP_VIEWPORT / 2 - cy * newScale,
+    };
+    setScale(newScale);
+    setOffset(clampOffset(newOffset, newScale));
+  }
 
-  try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const nextImage = new Image();
-      nextImage.onload = () => resolve(nextImage);
-      nextImage.onerror = () => reject(new Error("Could not read that image."));
-      nextImage.src = objectUrl;
-    });
+  function startDrag(clientX: number, clientY: number) {
+    setIsDragging(true);
+    dragStartRef.current = { x: clientX, y: clientY };
+    offsetAtDragStartRef.current = { ...offset };
+  }
 
-    const scale = Math.min(1, MAX_PHOTO_DIMENSION / Math.max(image.width, image.height));
-    const width = Math.max(1, Math.round(image.width * scale));
-    const height = Math.max(1, Math.round(image.height * scale));
+  function moveDrag(clientX: number, clientY: number) {
+    if (!isDragging) return;
+    const dx = clientX - dragStartRef.current.x;
+    const dy = clientY - dragStartRef.current.y;
+    setOffset(
+      clampOffset(
+        { x: offsetAtDragStartRef.current.x + dx, y: offsetAtDragStartRef.current.y + dy },
+        scale
+      )
+    );
+  }
 
+  function applyCrop() {
+    if (!imageEl) return;
     const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-
-    const context = canvas.getContext("2d");
-    if (!context) {
-      throw new Error("Your browser could not prepare that image.");
+    canvas.width = CROP_OUTPUT;
+    canvas.height = CROP_OUTPUT;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      setCropError("Your browser could not prepare that image.");
+      return;
     }
-
-    context.drawImage(image, 0, 0, width, height);
-
-    const qualities = [0.82, 0.72, 0.62, 0.5, 0.4];
-    let dataUrl = canvas.toDataURL("image/jpeg", qualities[0]);
-
-    for (const quality of qualities.slice(1)) {
-      if (dataUrl.length <= MAX_PHOTO_DATA_URL_LENGTH) {
-        break;
-      }
-      dataUrl = canvas.toDataURL("image/jpeg", quality);
-    }
-
-    if (dataUrl.length > MAX_PHOTO_DATA_URL_LENGTH) {
-      throw new Error("That photo is still too large. Try a tighter crop.");
-    }
-
-    return dataUrl;
-  } finally {
-    URL.revokeObjectURL(objectUrl);
+    const sourceX = -offset.x / scale;
+    const sourceY = -offset.y / scale;
+    const sourceSize = CROP_VIEWPORT / scale;
+    ctx.drawImage(imageEl, sourceX, sourceY, sourceSize, sourceSize, 0, 0, CROP_OUTPUT, CROP_OUTPUT);
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          onConfirm(blob);
+        } else {
+          setCropError("Could not convert image. Please try a different photo.");
+        }
+      },
+      "image/webp",
+      0.85
+    );
   }
+
+  const minScale = imageEl ? CROP_VIEWPORT / Math.min(imageEl.width, imageEl.height) : 0.1;
+  const maxScale = minScale * 4;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+      <div className="w-full max-w-sm rounded-3xl bg-white p-5 space-y-4">
+        <h2 className="text-lg font-semibold text-slate-900">Crop your photo</h2>
+        <p className="text-sm text-slate-500">Drag to reposition · Use the slider to zoom</p>
+
+        {imageUrl && (
+          <>
+            <div
+              className="relative mx-auto overflow-hidden rounded-2xl bg-slate-100 cursor-grab active:cursor-grabbing select-none"
+              style={{ width: CROP_VIEWPORT, height: CROP_VIEWPORT }}
+              onMouseDown={(e) => { e.preventDefault(); startDrag(e.clientX, e.clientY); }}
+              onMouseMove={(e) => moveDrag(e.clientX, e.clientY)}
+              onMouseUp={() => setIsDragging(false)}
+              onMouseLeave={() => setIsDragging(false)}
+              onTouchStart={(e) => { if (e.touches.length === 1) startDrag(e.touches[0].clientX, e.touches[0].clientY); }}
+              onTouchMove={(e) => { if (e.touches.length === 1) moveDrag(e.touches[0].clientX, e.touches[0].clientY); }}
+              onTouchEnd={() => setIsDragging(false)}
+            >
+              {imageEl && (
+                <img
+                  src={imageUrl}
+                  alt="Crop preview"
+                  draggable={false}
+                  style={{
+                    position: "absolute",
+                    width: imageEl.width * scale,
+                    height: imageEl.height * scale,
+                    left: offset.x,
+                    top: offset.y,
+                    userSelect: "none",
+                    pointerEvents: "none",
+                  }}
+                />
+              )}
+            </div>
+
+            <div className="space-y-1 px-1">
+              <input
+                type="range"
+                min={minScale}
+                max={maxScale}
+                step={0.01}
+                value={scale}
+                onChange={(e) => handleScaleChange(Number(e.target.value))}
+                className="w-full accent-rose-500"
+                aria-label="Zoom"
+              />
+            </div>
+          </>
+        )}
+
+        {cropError && (
+          <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-700">{cropError}</p>
+        )}
+
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex-1 rounded-full border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={applyCrop}
+            disabled={!imageEl}
+            className="flex-1 rounded-full bg-gradient-to-r from-rose-500 to-orange-400 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-rose-200 transition hover:brightness-105 disabled:opacity-50"
+          >
+            Use photo
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function getProfileTitle(step: ProfileStepId, gender?: ParticipantAnswers["gender"]) {
@@ -170,7 +309,7 @@ function getProfileTitle(step: ProfileStepId, gender?: ParticipantAnswers["gende
     case "interests":
       return "What are you into?";
     case "photo":
-      return "Add a photo";
+      return "Add your photos";
     default:
       return "";
   }
@@ -183,7 +322,7 @@ function getProfileSubtitle(step: ProfileStepId) {
     case "interests":
       return "Choose the three that feel most like you.";
     case "photo":
-      return "A clear, simple photo works best.";
+      return "Add up to 3 photos. Tap a slot to add or replace.";
     default:
       return null;
   }
@@ -220,6 +359,7 @@ function ProfilePageContent() {
   const [error, setError] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [processingPhoto, setProcessingPhoto] = useState(false);
+  const [cropFile, setCropFile] = useState<File | null>(null);
   const [hasSavedProfile, setHasSavedProfile] = useState(false);
   const [motionDirection, setMotionDirection] = useState<MotionDirection>("forward");
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -561,27 +701,64 @@ function ProfilePageContent() {
 
   async function handlePhotoChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (!file) {
+    event.target.value = "";
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setPhotoError("Please choose an image file.");
       return;
     }
 
     setPhotoError(null);
+    setCropFile(file);
+  }
+
+  async function handleCropConfirm(blob: Blob) {
+    setCropFile(null);
     setProcessingPhoto(true);
 
     try {
-      const compressedDataUrl = await compressImageToDataUrl(file);
-      setForm((previous) => ({
+      const formData = new FormData();
+      formData.append("file", blob, "photo.webp");
+
+      const response = await fetch("/api/upload-photo", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setPhotoError(data.error ?? "Upload failed. Please try again.");
+        return;
+      }
+
+      const { url } = data as { url: string };
+      updateForm((previous) => ({
         ...previous,
-        photo_data_url: compressedDataUrl,
+        photo_urls: [...(previous.photo_urls ?? []), url].slice(0, 3),
       }));
-    } catch (uploadError) {
-      const message =
-        uploadError instanceof Error ? uploadError.message : "That image could not be prepared.";
-      setPhotoError(message);
+    } catch {
+      setPhotoError("Upload failed. Please check your connection.");
     } finally {
       setProcessingPhoto(false);
-      event.target.value = "";
     }
+  }
+
+  async function handleDeletePhoto(urlToDelete: string) {
+    // Optimistically remove from UI immediately
+    updateForm((previous) => ({
+      ...previous,
+      photo_urls: (previous.photo_urls ?? []).filter((u) => u !== urlToDelete),
+    }));
+
+    // Best-effort delete from Vercel Blob
+    fetch("/api/delete-photo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: urlToDelete }),
+    }).catch(() => {
+      // Silently ignore – the URL has already been removed from the profile
+    });
   }
 
   async function handleSaveProfile() {
@@ -664,6 +841,13 @@ function ProfilePageContent() {
 
   return (
     <div className="min-h-screen bg-white flex flex-col [transform:translateZ(0)]">
+      {cropFile && (
+        <ImageCropModal
+          file={cropFile}
+          onConfirm={handleCropConfirm}
+          onCancel={() => setCropFile(null)}
+        />
+      )}
       <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-5 py-3">
         <p className="text-base font-bold text-rose-600">Matchmaker T.O.</p>
         <div className="flex items-center gap-2">
@@ -916,57 +1100,62 @@ function ProfilePageContent() {
 
                     {currentProfileStep === "photo" && (
                       <div className="space-y-5">
-                        <div className="rounded-[32px] border border-dashed border-rose-200 bg-rose-50/70 p-5 text-center">
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={handlePhotoChange}
-                          />
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handlePhotoChange}
+                        />
 
-                          {form.photo_data_url ? (
-                            <img
-                              src={form.photo_data_url}
-                              alt="Profile preview"
-                              className="mx-auto h-44 w-44 rounded-[32px] object-cover shadow-lg shadow-rose-100"
-                            />
-                          ) : (
-                            <div className="mx-auto flex h-44 w-44 items-center justify-center rounded-[32px] bg-white text-6xl shadow-inner shadow-rose-100">
-                              📷
-                            </div>
-                          )}
+                        <div className="grid grid-cols-3 gap-3">
+                          {Array.from({ length: 3 }).map((_, index) => {
+                            const photoUrl = form.photo_urls?.[index];
+                            const filledCount = form.photo_urls?.length ?? 0;
+                            const isNextSlot = index === filledCount;
 
-                          <div className="mt-5 flex flex-col items-center gap-3">
-                            <button
-                              type="button"
-                              onClick={() => fileInputRef.current?.click()}
-                              disabled={processingPhoto}
-                              className="rounded-full bg-slate-900 px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {processingPhoto
-                                ? "Preparing photo…"
-                                : form.photo_data_url
-                                  ? "Replace photo"
-                                  : "Choose a photo"}
-                            </button>
-
-                            {form.photo_data_url && !processingPhoto && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  updateForm((previous) => ({
-                                    ...previous,
-                                    photo_data_url: undefined,
-                                  }));
-                                  setPhotoError(null);
-                                }}
-                                className="text-sm font-medium text-slate-500 underline decoration-slate-300 underline-offset-4 transition hover:text-slate-700"
-                              >
-                                Remove photo
-                              </button>
-                            )}
-                          </div>
+                            return (
+                              <div key={index} className="relative aspect-square">
+                                {photoUrl ? (
+                                  <>
+                                    <img
+                                      src={photoUrl}
+                                      alt={`Photo ${index + 1}`}
+                                      className="h-full w-full rounded-[24px] object-cover"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeletePhoto(photoUrl)}
+                                      aria-label={`Remove photo ${index + 1}`}
+                                      className="absolute -right-2 -top-2 flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white shadow-lg transition hover:bg-slate-700"
+                                    >
+                                      ×
+                                    </button>
+                                  </>
+                                ) : isNextSlot ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={processingPhoto}
+                                    className="h-full w-full rounded-[24px] border-2 border-dashed border-rose-200 bg-rose-50/70 flex flex-col items-center justify-center gap-1 text-rose-400 transition hover:border-rose-300 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {processingPhoto ? (
+                                      <span className="text-xs font-medium">Uploading…</span>
+                                    ) : (
+                                      <>
+                                        <span className="text-2xl">+</span>
+                                        {index === 0 && (
+                                          <span className="text-xs font-medium">Add photo</span>
+                                        )}
+                                      </>
+                                    )}
+                                  </button>
+                                ) : (
+                                  <div className="h-full w-full rounded-[24px] border border-rose-100 bg-rose-50/40" />
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
 
                         {photoError && (

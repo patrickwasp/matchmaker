@@ -130,9 +130,9 @@ export default function MatchesPage() {
         {isCelebrating && <div className="match-burst" />}
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-4">
-            {profile.photo_data_url ? (
+            {(profile.photo_urls?.[0] ?? profile.photo_data_url) ? (
               <img
-                src={profile.photo_data_url}
+                src={profile.photo_urls?.[0] ?? profile.photo_data_url}
                 alt={profile.name}
                 className="h-16 w-16 rounded-[24px] object-cover"
               />

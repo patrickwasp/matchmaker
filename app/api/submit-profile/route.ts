@@ -61,11 +61,7 @@ const AnswersSchema = z.object({
     .length(INTEREST_LIMIT),
   location: z.string().trim().max(100).optional(),
   bio: z.string().trim().max(500).optional(),
-  photo_data_url: z
-    .string()
-    .max(45000)
-    .regex(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "Upload a valid image.")
-    .optional(),
+  photo_urls: z.array(z.string().url()).max(3).optional(),
 });
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # 💘 Matchmaker
 
-A lightweight online matchmaking / speed-dating web application that runs almost entirely on **free infrastructure**.
+A lightweight online matchmaking / speed-dating web application that runs entirely on **free infrastructure**.
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fpatrickwasp%2Fmatchmaker&project-name=matchmaker&repository-name=matchmaker&demo-title=Matchmaker&demo-description=Next.js%20matchmaking%20app%20with%20Convex%2C%20NextAuth%2C%20and%20Vercel%20Blob&products=%5B%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22convex%22%2C%22productSlug%22%3A%22convex%22%2C%22protocol%22%3A%22storage%22%7D%5D)
 

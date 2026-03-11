@@ -101,10 +101,13 @@ export async function GET() {
         })
         .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name));
 
+    const myPhotoUrl = myAnswers.photo_urls?.[0] ?? myAnswers.photo_data_url;
+
     const response: ResultsResponse = {
         matches: ranked.filter((profile) => profile.mutualMatch),
         browse: ranked,
         targetGender,
+        myPhotoUrl,
     };
 
     return NextResponse.json(response);

@@ -2,17 +2,26 @@
 
 import { useSession, signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 export default function Home() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const redirectedRef = useRef(false);
 
   useEffect(() => {
-    // Redirect signed-in users straight to their profile page
-    if (status === "authenticated") {
-      router.push("/profile");
-    }
+    if (status !== "authenticated" || redirectedRef.current) return;
+    redirectedRef.current = true;
+    fetch("/api/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((participant) => {
+        if (participant?.answers_json && participant?.quiz_answers_json) {
+          router.push("/matches");
+        } else {
+          router.push("/profile");
+        }
+      })
+      .catch(() => router.push("/profile"));
   }, [status, router]);
 
   return (

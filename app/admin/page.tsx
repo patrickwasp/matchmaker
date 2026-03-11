@@ -26,10 +26,6 @@ export default function AdminPage() {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<AdminTab>("overview");
 
-    const [running, setRunning] = useState(false);
-    const [result, setResult] = useState<{ matched: number; participants: number } | null>(null);
-    const [error, setError] = useState<string | null>(null);
-
     const [users, setUsers] = useState<AdminUserSummary[]>([]);
     const [loadingUsers, setLoadingUsers] = useState(true);
     const [userError, setUserError] = useState<string | null>(null);
@@ -94,25 +90,6 @@ export default function AdminPage() {
             setUserError("Network error. Please try again.");
         } finally {
             setLoadingUsers(false);
-        }
-    }
-
-    async function handleRunMatching() {
-        setRunning(true);
-        setError(null);
-        setResult(null);
-        try {
-            const response = await fetch("/api/run-matching", { method: "POST" });
-            const data = await response.json();
-            if (!response.ok) {
-                setError(data.error ?? "Something went wrong.");
-            } else {
-                setResult({ matched: data.matched, participants: data.participants });
-            }
-        } catch {
-            setError("Network error. Please try again.");
-        } finally {
-            setRunning(false);
         }
     }
 
@@ -238,23 +215,16 @@ export default function AdminPage() {
                 </section>
 
                 {activeTab === "overview" && <section className="rounded-[32px] border border-white/80 bg-white/92 p-6 shadow-[0_22px_70px_rgba(190,24,93,0.08)] backdrop-blur">
-                    <h2 className="text-xl font-semibold text-slate-900">Run matching</h2>
+                    <h2 className="text-xl font-semibold text-slate-900">Runtime ranking</h2>
                     <p className="mt-2 text-sm leading-6 text-slate-500">
-                        Builds heterosexual one-to-one matches from saved profiles and quiz answers.
+                        Top Picks are calculated automatically whenever a user opens the results page. There is no manual matching job anymore.
                     </p>
-                    <button
-                        onClick={handleRunMatching}
-                        disabled={running}
-                        className="mt-4 rounded-full bg-rose-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-rose-600 disabled:opacity-50"
-                    >
-                        {running ? "Running matchmaking…" : "Run matching now"}
-                    </button>
-                    {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
-                    {result && (
-                        <p className="mt-3 text-sm text-emerald-600">
-                            Matching complete. {result.matched} pairs created from {result.participants} participants.
+                    <div className="mt-4 rounded-[24px] border border-rose-100 bg-rose-50/60 p-4 text-sm text-slate-600">
+                        <p className="font-semibold text-slate-900">Current score inputs</p>
+                        <p className="mt-2 leading-6">
+                            Opposite sex is required. After that, ranking is based on reciprocal age preference fit, shared interests, same-location bonus, and matching quiz answer pairs.
                         </p>
-                    )}
+                    </div>
                     <div className="mt-8 border-t border-rose-100 pt-6">
                         <h3 className="text-lg font-semibold text-slate-900">Test data</h3>
                         <p className="mt-2 text-sm leading-6 text-slate-500">

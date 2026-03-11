@@ -118,4 +118,5 @@ export interface ResultsResponse {
   matches: ResultsProfile[];
   browse: ResultsProfile[];
   targetGender: Gender;
+  myPhotoUrl?: string;
 }

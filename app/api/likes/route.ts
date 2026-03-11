@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { z } from "zod";
 import { authOptions } from "@/lib/auth";
 import { getAllLikes, getParticipantByEmail, getParticipantById, upsertLike } from "@/lib/storage";
+import type { ParticipantAnswers } from "@/types";
 
 const LikePayloadSchema = z.object({
   targetParticipantId: z.string().min(1),
@@ -50,8 +51,19 @@ export async function POST(request: NextRequest) {
       like.liked
   );
 
+  let phoneNumber: string | undefined;
+  if (parsed.data.liked && reciprocalLike) {
+    try {
+      const targetAnswers = JSON.parse(target.answers_json) as ParticipantAnswers;
+      phoneNumber = targetAnswers.phone_number;
+    } catch {
+      phoneNumber = undefined;
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     mutualMatch: parsed.data.liked && Boolean(reciprocalLike),
+    phoneNumber,
   });
 }

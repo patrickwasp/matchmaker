@@ -40,7 +40,7 @@ export default function Home() {
           <div className="text-gray-400">Redirecting…</div>
         ) : (
           <button
-            onClick={() => signIn("google", { callbackUrl: "/profile" })}
+            onClick={() => signIn("google", { callbackUrl: "/" })}
             className="flex w-full items-center justify-center gap-3 rounded-full border border-gray-300 bg-white px-6 py-3 text-gray-700 shadow-sm transition hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-rose-400"
           >
             {/* Google "G" icon */}

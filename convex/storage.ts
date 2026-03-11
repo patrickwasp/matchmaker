@@ -163,6 +163,29 @@ export const replaceQuizQuestions = internalMutation({
   },
 });
 
+export const deleteParticipantByEmail = internalMutation({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    const participant = await ctx.db
+      .query("participants")
+      .withIndex("by_participant_email", (query) => query.eq("email", args.email))
+      .unique();
+
+    if (!participant) {
+      return;
+    }
+
+    // Delete all likes where this participant is liker or liked
+    const likes = await ctx.db.query("likes").collect();
+    const likesToDelete = likes.filter(
+      (like) => like.liker_id === participant.id || like.liked_id === participant.id
+    );
+    await Promise.all(likesToDelete.map((like) => ctx.db.delete(like._id)));
+
+    await ctx.db.delete(participant._id);
+  },
+});
+
 export const deleteTestData = internalMutation({
   args: {},
   handler: async (ctx) => {

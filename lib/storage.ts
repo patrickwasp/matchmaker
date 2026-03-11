@@ -238,6 +238,28 @@ export async function replaceQuizQuestions(
   });
 }
 
+export async function deleteParticipant(email: string): Promise<void> {
+  // Delete all profile photos from blob storage first
+  const participant = await getParticipantByEmail(email);
+  if (participant) {
+    try {
+      const answers = JSON.parse(participant.answers_json) as ParticipantAnswers;
+      const blobPathnames = (answers.photo_urls ?? [])
+        .filter((url) => url.startsWith("/api/photo/"))
+        .map((url) => url.slice("/api/photo/".length));
+
+      if (blobPathnames.length > 0 && process.env.BLOB_READ_WRITE_TOKEN) {
+        await Promise.allSettled(blobPathnames.map((pathname) => del(pathname)));
+      }
+    } catch {
+      // If photo deletion fails, still proceed with account deletion
+    }
+  }
+
+  const client = getConvexClient();
+  await runInternalMutation<void>(client, internal.storage.deleteParticipantByEmail, { email });
+}
+
 export async function deleteTestData(): Promise<{ participants: number; likes: number }> {
   // Collect photo URLs for all test participants before removing them
   const allParticipants = await getAllParticipants();

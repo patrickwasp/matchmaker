@@ -507,7 +507,7 @@ function getProfileSubtitle(step: ProfileStepId) {
     case "interests":
       return "Choose the three that feel most like you.";
     case "photo":
-      return "Add up to 3 photos. Tap a slot to add or replace.";
+      return "Add at least 1 photo (up to 3). Tap a slot to add or replace.";
     default:
       return null;
   }
@@ -875,7 +875,7 @@ function ProfilePageContent() {
       case "interests":
         return (form.interests?.length ?? 0) === INTEREST_LIMIT;
       case "photo":
-        return !processingPhoto;
+        return !processingPhoto && (form.photo_urls?.length ?? 0) >= 1;
       default:
         return false;
     }
@@ -1086,7 +1086,7 @@ function ProfilePageContent() {
         />
       )}
       <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-5 py-3">
-        <p className="text-base font-bold text-rose-600">Matchmaker T.O.</p>
+        <p className="text-base font-bold text-rose-600">Matchmaker</p>
         <div className="flex items-center gap-2">
           {hasSavedProfile && (
             <button

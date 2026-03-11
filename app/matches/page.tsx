@@ -813,10 +813,10 @@ export default function MatchesPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => router.push("/profile")}
+            onClick={() => router.push("/account")}
             className="rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-600 transition hover:border-rose-300 hover:bg-rose-50"
           >
-            Edit profile
+            Account
           </button>
           <button
             onClick={() => signOut({ callbackUrl: "/" })}

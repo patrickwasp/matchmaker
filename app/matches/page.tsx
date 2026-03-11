@@ -204,6 +204,53 @@ function createSmsHref(phoneNumber: string) {
   return `sms:${cleaned}`;
 }
 
+function wrapIndex(index: number, total: number) {
+  return (index + total) % total;
+}
+
+function getDeckSlot(position: number) {
+  if (position === 0) return { x: 0,    y: 0,  rotate: 0,  scale: 1,    zIndex: 30, opacity: 1 };
+  if (position === 1) return { x: 120,  y: 16, rotate: 7,  scale: 0.94, zIndex: 20, opacity: 0.98 };
+  return                       { x: -120, y: 16, rotate: -7, scale: 0.94, zIndex: 10, opacity: 0.98 };
+}
+
+function DeckCard({
+  src,
+  alt,
+  position,
+  direction,
+  isFront,
+}: {
+  src: string;
+  alt: string;
+  position: number;
+  direction: 1 | -1;
+  isFront: boolean;
+}) {
+  const slot = getDeckSlot(position);
+  return (
+    <motion.div
+      className="absolute inset-0 m-auto h-[min(78vw,78vh,680px)] w-[min(78vw,78vh,680px)] overflow-hidden rounded-[2rem] border border-white/15 shadow-2xl"
+      initial={{ opacity: 0, scale: 0.88, y: 40, rotate: position === 1 ? 12 : position === 2 ? -12 : 0 }}
+      animate={{ ...slot }}
+      exit={{ opacity: 0, scale: 0.9, y: 30 }}
+      transition={{ type: "spring", stiffness: 240, damping: 24, mass: 0.9 }}
+      style={{ zIndex: slot.zIndex }}
+    >
+      <motion.img
+        key={src + String(isFront)}
+        src={src}
+        alt={alt}
+        className="h-full w-full object-cover"
+        initial={isFront ? { x: direction > 0 ? 80 : -80, rotate: direction > 0 ? 5 : -5, scale: 1.03 } : false}
+        animate={{ x: 0, rotate: 0, scale: 1 }}
+        transition={{ type: "spring", stiffness: 220, damping: 24 }}
+      />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/10" />
+    </motion.div>
+  );
+}
+
 function PhotoDeckOverlay({
   photos,
   name,
@@ -213,13 +260,24 @@ function PhotoDeckOverlay({
   name: string;
   onClose: () => void;
 }) {
-  const [current, setCurrent] = useState(0);
+  const [activeIndex, setActiveIndex] = useState(0);
   const [direction, setDirection] = useState<1 | -1>(1);
 
-  function navigate(dir: "next" | "prev") {
-    const d = dir === "next" ? 1 : -1;
-    setDirection(d);
-    setCurrent((prev) => (prev + d + photos.length) % photos.length);
+  const orderedPhotos = useMemo(() => {
+    const front = photos[activeIndex];
+    const right = photos[wrapIndex(activeIndex + 1, photos.length)];
+    const left  = photos[wrapIndex(activeIndex - 1, photos.length)];
+    return [front, right, left];
+  }, [activeIndex, photos]);
+
+  function goNext() {
+    setDirection(1);
+    setActiveIndex((prev) => wrapIndex(prev + 1, photos.length));
+  }
+
+  function goPrev() {
+    setDirection(-1);
+    setActiveIndex((prev) => wrapIndex(prev - 1, photos.length));
   }
 
   useEffect(() => {
@@ -231,8 +289,8 @@ function PhotoDeckOverlay({
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
-      if (e.key === "ArrowRight") navigate("next");
-      if (e.key === "ArrowLeft") navigate("prev");
+      if (e.key === "ArrowRight") goNext();
+      if (e.key === "ArrowLeft") goPrev();
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -240,107 +298,82 @@ function PhotoDeckOverlay({
 
   return (
     <motion.div
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/70 p-4 backdrop-blur-xl"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center p-5"
-      style={{ background: "rgba(8,7,6,0.88)", backdropFilter: "blur(18px) saturate(0.6)" }}
-      onClick={onClose}
+      transition={{ duration: 0.22 }}
     >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.85, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.9, y: 12 }}
-        transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-        className="relative flex flex-col items-center gap-5"
-        style={{ width: "min(90vw, 90vh, 540px)" }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Card stage */}
-        <div
-          className="relative w-full overflow-hidden rounded-2xl"
-          style={{
-            aspectRatio: "1 / 1",
-            boxShadow:
-              "0 0 0 1px rgba(255,255,255,0.07), 0 40px 120px rgba(0,0,0,0.7), 0 8px 32px rgba(0,0,0,0.5)",
-          }}
-        >
-          <AnimatePresence initial={false} custom={direction}>
-            <motion.img
-              key={current}
-              src={photos[current]}
-              alt={`${name} photo ${current + 1}`}
-              custom={direction}
-              variants={{
-                enter: (d: number) => ({ x: `${d * 108}%`, opacity: 0, scale: 0.92 }),
-                center: { x: "0%", opacity: 1, scale: 1 },
-                exit: (d: number) => ({ x: `${d * -108}%`, opacity: 0, scale: 0.9 }),
-              }}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
-              className="absolute inset-0 h-full w-full object-cover"
-            />
-          </AnimatePresence>
+      {/* Backdrop click to close */}
+      <div className="absolute inset-0" onClick={onClose} />
 
-          {/* Close button */}
+      <motion.div
+        className="relative flex h-full w-full items-center justify-center"
+        initial={{ scale: 0.94, opacity: 0, y: 24 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.97, opacity: 0, y: 18 }}
+        transition={{ type: "spring", stiffness: 220, damping: 24 }}
+      >
+        {/* Close */}
+        <button
+          type="button"
+          aria-label="Close"
+          onClick={onClose}
+          className="absolute right-4 top-4 z-[70] rounded-full border border-white/15 bg-black/40 p-3 text-white shadow-lg transition hover:scale-105 hover:bg-black/55"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-5 w-5">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+
+        {/* Prev */}
+        {photos.length > 1 && (
           <button
             type="button"
-            onClick={onClose}
-            className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/45 text-white/80 backdrop-blur-sm transition hover:bg-black/70 hover:text-white active:scale-95"
-            aria-label="Close"
+            aria-label="Previous photo"
+            onClick={goPrev}
+            className="absolute left-3 top-1/2 z-[70] -translate-y-1/2 rounded-full border border-white/15 bg-black/40 p-3 text-white shadow-lg transition hover:scale-105 hover:bg-black/55 md:left-8"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-4 w-4">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+              <polyline points="15 18 9 12 15 6" />
             </svg>
           </button>
+        )}
 
-          {photos.length > 1 && (
-            <p className="absolute bottom-3 left-1/2 -translate-x-1/2 pointer-events-none whitespace-nowrap text-[11px] tracking-widest text-white/35">
-              ← → arrow keys
-            </p>
-          )}
+        {/* Next */}
+        {photos.length > 1 && (
+          <button
+            type="button"
+            aria-label="Next photo"
+            onClick={goNext}
+            className="absolute right-3 top-1/2 z-[70] -translate-y-1/2 rounded-full border border-white/15 bg-black/40 p-3 text-white shadow-lg transition hover:scale-105 hover:bg-black/55 md:right-8"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </button>
+        )}
+
+        {/* Card deck */}
+        <div className="relative h-full w-full">
+          <AnimatePresence mode="popLayout" initial={false}>
+            {orderedPhotos.map((src, index) => (
+              <DeckCard
+                key={`${src}-${activeIndex}-${index}`}
+                src={src}
+                alt={`${name} photo ${index === 0 ? activeIndex + 1 : ""}`}
+                position={index}
+                direction={direction}
+                isFront={index === 0}
+              />
+            ))}
+          </AnimatePresence>
         </div>
 
-        {/* Navigation controls */}
+        {/* Counter */}
         {photos.length > 1 && (
-          <div className="flex items-center gap-5">
-            <button
-              type="button"
-              onClick={() => navigate("prev")}
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-white/10 text-white/70 backdrop-blur-sm transition hover:bg-white/20 hover:text-white active:scale-95"
-              aria-label="Previous photo"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                <polyline points="15 18 9 12 15 6" />
-              </svg>
-            </button>
-
-            <div className="flex items-center gap-2">
-              {photos.map((_, i) => (
-                <div
-                  key={i}
-                  className="h-1.5 rounded-full transition-all duration-300"
-                  style={{
-                    width: i === current ? "20px" : "6px",
-                    background: i === current ? "#c9a96e" : "rgba(255,255,255,0.25)",
-                  }}
-                />
-              ))}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => navigate("next")}
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-white/10 text-white/70 backdrop-blur-sm transition hover:bg-white/20 hover:text-white active:scale-95"
-              aria-label="Next photo"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                <polyline points="9 18 15 12 9 6" />
-              </svg>
-            </button>
+          <div className="absolute bottom-5 left-1/2 z-[70] -translate-x-1/2 rounded-full border border-white/15 bg-black/45 px-4 py-2 text-sm text-white/90 shadow-lg backdrop-blur-md">
+            {activeIndex + 1} / {photos.length}
           </div>
         )}
       </motion.div>
